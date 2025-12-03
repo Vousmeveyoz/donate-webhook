@@ -12,8 +12,8 @@ app.use(express.json({ limit: '100kb' }));
 // 🗂️ STORAGE PER USER
 // ═══════════════════════════════════════════════════
 
-let donations = {}; // { userKey: donationData }
-let timestamps = {}; // { userKey: lastTimestamp }
+let donations = {};
+let timestamps = {};
 
 // Anti-spam settings
 const MIN_DONATION_INTERVAL = 2000; // 2 seconds
@@ -25,27 +25,26 @@ const DONATION_TIMEOUT = 30000; // 30 seconds
 
 const USER_OVERRIDES = {
     "1PJQ-WNSE-ZAN7-OKNW": {
-        enabled: true,
+        enabled: false,
         donor_name: 'BLOKMARKET',
         message: 'LANGSUNG AJA ORDER DI BLOKMARKET'
     }
 };
 
 // ════════════════════════════════════════════════════════════
-// 🎯 WEBHOOK PARSERS (FIXED - Updated for Real Formats)
+// 🎯 WEBHOOK PARSERS
 // ════════════════════════════════════════════════════════════
 
 function parseSaweria(data) {
     return {
         platform: 'saweria',
-        donor_name: data.donator_name || 'Anonymous',
-        amount: data.amount_raw || data.etc?.amount_to_display || 0,
-        message: data.message || ''
+        donor_name: data.donator_name || data.donatur_name || 'Anonymous',
+        amount: data.amount_raw || data.amount || data.etc?.amount_to_display || 0,
+        message: data.message || data.donator_message || ''
     };
 }
 
 function parseSociabuzz(data) {
-    // ✅ FIXED: SociaBuzz uses 'supporter' not 'supporter_name'
     return {
         platform: 'sociabuzz',
         donor_name: data.supporter || data.supporter_name || data.name || 'Anonymous',
@@ -73,100 +72,79 @@ function parseTako(data) {
 }
 
 // ════════════════════════════════════════════════════════════
-// 🔍 AUTO-DETECT PLATFORM (FIXED - Better Detection)
+// 🔍 AUTO-DETECT PLATFORM
 // ════════════════════════════════════════════════════════════
 
 function autoDetectPlatform(data) {
-    console.log('\n📦 Webhook received');
-    console.log('Keys:', Object.keys(data).join(', '));
-    
-    // ✅ PRIORITY 1: Saweria - has 'version' + 'donator_name'
-    if (data.version && data.donator_name) {
-        console.log('✅ Detected: SAWERIA (version + donator_name)');
+    // Saweria - has 'version' + 'donator_name' or 'donatur_name'
+    if (data.version && (data.donator_name || data.donatur_name)) {
         return parseSaweria(data);
     }
     
-    // ✅ PRIORITY 2: SociaBuzz - has 'supporter' + 'email_supporter' + 'currency'
-    // This is the most specific SociaBuzz identifier
+    // Saweria - donator_name field
+    if (data.donator_name || data.donatur_name) {
+        return parseSaweria(data);
+    }
+    
+    // SociaBuzz - has 'supporter' + 'email_supporter' or 'currency'
     if (data.supporter && (data.email_supporter || data.currency === 'IDR')) {
-        console.log('✅ Detected: SOCIABUZZ (supporter + email/currency)');
         return parseSociabuzz(data);
     }
     
-    // ✅ PRIORITY 3: Check for 'content' object with sociabuzz link
+    // SociaBuzz - content link
     if (data.content && data.content.link && data.content.link.includes('sociabuzz.com')) {
-        console.log('✅ Detected: SOCIABUZZ (content link)');
         return parseSociabuzz(data);
     }
     
-    // ✅ PRIORITY 4: Check explicit platform field
+    // Check explicit platform field
     const platform = (data.platform || data.type || '').toLowerCase();
     
     if (platform === 'sociabuzz') {
-        console.log('✅ Detected: SOCIABUZZ (explicit platform)');
         return parseSociabuzz(data);
     }
     
+    if (platform === 'saweria') {
+        return parseSaweria(data);
+    }
+    
     if (platform === 'trakteer') {
-        console.log('✅ Detected: TRAKTEER (explicit platform)');
         return parseTrakteer(data);
     }
     
     if (platform === 'tako') {
-        console.log('✅ Detected: TAKO (explicit platform)');
         return parseTako(data);
     }
     
-    // ✅ PRIORITY 5: Check URL field
+    // Check URL field
     if (data.url) {
         if (data.url.includes('sociabuzz')) {
-            console.log('✅ Detected: SOCIABUZZ (url)');
             return parseSociabuzz(data);
         }
         if (data.url.includes('trakteer')) {
-            console.log('✅ Detected: TRAKTEER (url)');
             return parseTrakteer(data);
         }
         if (data.url.includes('saweria')) {
-            console.log('✅ Detected: SAWERIA (url)');
             return parseSaweria(data);
         }
     }
     
-    // ✅ PRIORITY 6: Fallback by specific field combinations
-    
-    // Trakteer typically has 'supporter_name' + 'price'
+    // Fallback by field combinations
     if (data.supporter_name && data.price) {
-        console.log('⚠️ Fallback: TRAKTEER (supporter_name + price)');
         return parseTrakteer(data);
     }
     
-    // SociaBuzz has 'supporter' (not supporter_name)
     if (data.supporter && data.amount) {
-        console.log('⚠️ Fallback: SOCIABUZZ (supporter + amount)');
         return parseSociabuzz(data);
     }
     
-    // Saweria has 'donator_name'
-    if (data.donator_name) {
-        console.log('⚠️ Fallback: SAWERIA (donator_name)');
-        return parseSaweria(data);
-    }
-    
-    // Generic: has 'supporter_name'
     if (data.supporter_name) {
-        console.log('⚠️ Fallback: TRAKTEER (supporter_name generic)');
         return parseTrakteer(data);
     }
     
-    // Last resort: if has 'name' and 'amount'
     if (data.name && data.amount) {
-        console.log('⚠️ Fallback: SOCIABUZZ (generic name + amount)');
         return parseSociabuzz(data);
     }
     
-    console.log('❌ Could not detect platform');
-    console.log('Data:', JSON.stringify(data));
     return null;
 }
 
@@ -182,7 +160,6 @@ app.post('/donation/:key/webhook', (req, res) => {
     console.log(`📨 [${userKey}] Webhook received`);
     console.log(`🕒 ${new Date().toLocaleString()}`);
     
-    // Parse donation
     const donation = autoDetectPlatform(data);
     
     if (!donation) {
@@ -201,7 +178,7 @@ app.post('/donation/:key/webhook', (req, res) => {
     if (timestamps[userKey]) {
         const elapsed = Date.now() - timestamps[userKey];
         if (elapsed < MIN_DONATION_INTERVAL) {
-            console.log(`⚠️ Rate limited (${elapsed}ms < ${MIN_DONATION_INTERVAL}ms)`);
+            console.log(`⚠️ Rate limited (${elapsed}ms)`);
             console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
             return res.status(429).json({ error: 'RATE_LIMITED' });
         }
@@ -241,7 +218,7 @@ app.get('/donation/:key/data', (req, res) => {
     const userKey = req.params.key;
     
     if (!donations[userKey]) {
-        return res.status(204).send(); // No content
+        return res.status(204).send();
     }
     
     let donationToSend = donations[userKey];
@@ -255,10 +232,10 @@ app.get('/donation/:key/data', (req, res) => {
             amount: donationToSend.amount,
             message: override.message
         };
-        console.log(`🎨 [${userKey}] Override applied: ${override.donor_name}`);
+        console.log(`🎨 [${userKey}] Override applied`);
     }
     
-    console.log(`📤 [${userKey}] Sending to Roblox:`, donationToSend.donor_name, '-', donationToSend.amount, 'IDR');
+    console.log(`📤 [${userKey}] Sending:`, donationToSend.donor_name, '-', donationToSend.amount, 'IDR');
     res.json(donationToSend);
 });
 
@@ -309,99 +286,6 @@ app.post('/donation/:key/force-clear', (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════
-// 🧪 TEST ENDPOINTS
-// ════════════════════════════════════════════════════════════
-
-app.post('/donation/:key/test/:platform', (req, res) => {
-    const userKey = req.params.key;
-    const platform = req.params.platform;
-    
-    let testData;
-    
-    switch(platform) {
-        case 'saweria':
-            testData = {
-                version: "1.0",
-                donator_name: "Test Saweria",
-                amount_raw: 10000,
-                message: "Test donation"
-            };
-            break;
-            
-        case 'sociabuzz':
-            testData = {
-                supporter: "Test SociaBuzz",
-                email_supporter: "test@example.com",
-                amount: 15000,
-                currency: "IDR",
-                message: "Test donation",
-                content: {
-                    link: "https://sociabuzz.com/test"
-                }
-            };
-            break;
-            
-        case 'trakteer':
-            testData = {
-                type: "trakteer",
-                supporter_name: "Test Trakteer",
-                amount: 20000,
-                supporter_message: "Test donation"
-            };
-            break;
-            
-        case 'tako':
-            testData = {
-                type: "tako",
-                supporter_name: "Test Tako",
-                amount: 25000,
-                message: "Test donation"
-            };
-            break;
-            
-        default:
-            return res.status(400).json({ error: 'INVALID_PLATFORM' });
-    }
-    
-    const donation = autoDetectPlatform(testData);
-    
-    if (!donation) {
-        return res.status(500).json({ error: 'TEST_FAILED' });
-    }
-    
-    donations[userKey] = donation;
-    timestamps[userKey] = Date.now();
-    
-    console.log(`\n🧪 [${userKey}] TEST DONATION CREATED`);
-    console.log('   Platform:', donation.platform);
-    console.log('   Donor:', donation.donor_name);
-    console.log('   Amount:', donation.amount, 'IDR\n');
-    
-    res.json({
-        success: true,
-        donation: donation
-    });
-});
-
-// Debug endpoint - shows raw data
-app.post('/donation/:key/debug', (req, res) => {
-    const userKey = req.params.key;
-    
-    console.log(`\n🔍 [${userKey}] DEBUG WEBHOOK`);
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log(JSON.stringify(req.body, null, 2));
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-    
-    const donation = autoDetectPlatform(req.body);
-    
-    res.json({
-        received: req.body,
-        parsed: donation,
-        valid: !!donation
-    });
-});
-
-// ════════════════════════════════════════════════════════════
 // 🧹 AUTO-CLEANUP
 // ════════════════════════════════════════════════════════════
 
@@ -417,7 +301,7 @@ setInterval(() => {
             delete timestamps[userKey];
         }
     }
-}, 10000); // Check every 10 seconds
+}, 10000);
 
 // ════════════════════════════════════════════════════════════
 // 🚀 START SERVER
@@ -425,34 +309,18 @@ setInterval(() => {
 
 app.listen(PORT, () => {
     console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('🚀 MULTI-PLATFORM DONATION SERVER - ACTIVE');
+    console.log('🚀 MULTI-PLATFORM DONATION SERVER - PRODUCTION');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log(`📡 Server: http://localhost:${PORT}`);
     console.log('');
-    console.log('🎯 Supported Platforms:');
-    console.log('   • Saweria');
-    console.log('   • SociaBuzz');
-    console.log('   • Trakteer');
-    console.log('   • Tako');
+    console.log('🎯 Supported: Saweria • SociaBuzz • Trakteer • Tako');
     console.log('');
-    console.log('📨 Main Webhook (set di platform):');
-    console.log('   POST /donation/:key/webhook');
+    console.log('📨 Webhook: POST /donation/:key/webhook');
+    console.log('🎮 Roblox:  GET  /donation/:key/data');
+    console.log('           DELETE /donation/:key/clear');
     console.log('');
-    console.log('🎮 Roblox Endpoints:');
-    console.log('   GET  /donation/:key/data  (polling)');
-    console.log('   DELETE /donation/:key/clear');
+    console.log('🔧 Admin:   GET  /donation/:key/status');
+    console.log('           POST /donation/:key/force-clear');
     console.log('');
-    console.log('🧪 Test Endpoints:');
-    console.log('   POST /donation/:key/test/saweria');
-    console.log('   POST /donation/:key/test/sociabuzz');
-    console.log('   POST /donation/:key/test/trakteer');
-    console.log('   POST /donation/:key/test/tako');
-    console.log('');
-    console.log('🔧 Admin:');
-    console.log('   GET  /donation/:key/status');
-    console.log('   POST /donation/:key/debug  (debug webhook)');
-    console.log('   POST /donation/:key/force-clear');
-    console.log('');
-    console.log('⚠️  Jangan lupa: ngrok http 8080');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 });
