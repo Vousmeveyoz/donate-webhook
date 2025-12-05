@@ -8,9 +8,9 @@ const PORT = 8080;
 
 app.use(express.json({ limit: '100kb' }));
 
-// ═══════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
 // 🗂️ STORAGE PER USER
-// ═══════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
 
 let donations = {};
 let timestamps = {};
@@ -32,8 +32,19 @@ const USER_OVERRIDES = {
 };
 
 // ════════════════════════════════════════════════════════════
-// 🎯 WEBHOOK PARSERS
+// 🎯 WEBHOOK PARSERS (All Platforms + BagiBagi)
 // ════════════════════════════════════════════════════════════
+
+function parseBagiBagi(data) {
+    return {
+        platform: 'bagibagi',
+        donor_name: data.donor_name || 'BagiBagi Donor',
+        amount: data.amount || 0,
+        message: data.message || '',
+        transaction_id: data.transaction_id || 'unknown',
+        koin: data.koin || 0
+    };
+}
 
 function parseSaweria(data) {
     return {
@@ -76,6 +87,11 @@ function parseTako(data) {
 // ════════════════════════════════════════════════════════════
 
 function autoDetectPlatform(data) {
+    // BagiBagi - check platform field or transaction_id
+    if (data.platform === 'bagibagi' || data.transaction_id) {
+        return parseBagiBagi(data);
+    }
+    
     // Saweria - has 'version' + 'donator_name' or 'donatur_name'
     if (data.version && (data.donator_name || data.donatur_name)) {
         return parseSaweria(data);
@@ -205,6 +221,12 @@ app.post('/donation/:key/webhook', (req, res) => {
     console.log('   Donor:', donation.donor_name);
     console.log('   Amount:', donation.amount, 'IDR');
     console.log('   Message:', donation.message || '(no message)');
+    if (donation.transaction_id) {
+        console.log('   Transaction ID:', donation.transaction_id);
+    }
+    if (donation.koin) {
+        console.log('   Koin:', donation.koin);
+    }
     console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
     
     res.status(200).json({ success: true });
@@ -313,7 +335,7 @@ app.listen(PORT, () => {
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log(`📡 Server: http://localhost:${PORT}`);
     console.log('');
-    console.log('🎯 Supported: Saweria • SociaBuzz • Trakteer • Tako');
+    console.log('🎯 Supported: BagiBagi • Saweria • SociaBuzz • Trakteer • Tako');
     console.log('');
     console.log('📨 Webhook: POST /donation/:key/webhook');
     console.log('🎮 Roblox:  GET  /donation/:key/data');
