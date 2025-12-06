@@ -9,15 +9,18 @@ const PORT = 8080;
 app.use(express.json({ limit: '100kb' }));
 
 // ═══════════════════════════════════════════════════════════
-// 🗂️ STORAGE PER USER
+// 🗂️ STORAGE PER USER - UNLIMITED QUEUE!
 // ═══════════════════════════════════════════════════════════
 
 let donations = {};
 let timestamps = {};
+let donationQueue = {}; // UNLIMITED QUEUE!
+let processedIds = {};
 
-// Anti-spam settings
-const MIN_DONATION_INTERVAL = 2000; // 2 seconds
-const DONATION_TIMEOUT = 30000; // 30 seconds
+// MINIMAL RESTRICTIONS - BIAR GAK ABUSE
+const MIN_DONATION_INTERVAL = 100;  // 0.1 detik aja (super cepet!)
+const DONATION_TIMEOUT = 60000;     // 60 detik
+const DUPLICATE_CHECK_WINDOW = 5000; // 5 detik doang
 
 // ════════════════════════════════════════════════════════════
 // 🎨 OVERRIDE SETTINGS (Per User)
@@ -30,6 +33,108 @@ const USER_OVERRIDES = {
         message: 'LANGSUNG AJA ORDER DI BLOKMARKET'
     }
 };
+
+// ════════════════════════════════════════════════════════════
+// 🆔 GENERATE UNIQUE DONATION ID
+// ════════════════════════════════════════════════════════════
+
+function generateDonationId(donation) {
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substr(2, 9);
+    const name = (donation.donor_name || 'anon').toLowerCase().replace(/\s/g, '');
+    const amount = donation.amount || 0;
+    const platform = donation.platform || 'unknown';
+    
+    return `${platform}_${name}_${amount}_${timestamp}_${random}`;
+}
+
+// ════════════════════════════════════════════════════════════
+// 🔍 CHECK IF DONATION IS DUPLICATE (VERY LOOSE)
+// ════════════════════════════════════════════════════════════
+
+function isDuplicate(userKey, donation) {
+    if (!processedIds[userKey]) {
+        return false;
+    }
+    
+    const now = Date.now();
+    const recentDonations = processedIds[userKey].filter(item => {
+        return (now - item.timestamp) < DUPLICATE_CHECK_WINDOW;
+    });
+    
+    // Only block EXACT duplicates in last 5 seconds
+    const isDupe = recentDonations.some(item => {
+        const timeDiff = now - item.timestamp;
+        return item.platform === donation.platform &&
+               item.donor_name === donation.donor_name &&
+               item.amount === donation.amount &&
+               timeDiff < 3000; // 3 detik doang
+    });
+    
+    return isDupe;
+}
+
+// ════════════════════════════════════════════════════════════
+// 📝 MARK DONATION AS PROCESSED
+// ════════════════════════════════════════════════════════════
+
+function markAsProcessed(userKey, donation) {
+    if (!processedIds[userKey]) {
+        processedIds[userKey] = [];
+    }
+    
+    processedIds[userKey].push({
+        platform: donation.platform,
+        donor_name: donation.donor_name,
+        amount: donation.amount,
+        timestamp: Date.now()
+    });
+    
+    // Keep only last 50 entries (lebih banyak!)
+    if (processedIds[userKey].length > 50) {
+        processedIds[userKey] = processedIds[userKey].slice(-50);
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// 📥 UNLIMITED QUEUE MANAGEMENT
+// ════════════════════════════════════════════════════════════
+
+function addToQueue(userKey, donation) {
+    if (!donationQueue[userKey]) {
+        donationQueue[userKey] = [];
+    }
+    
+    // NO LIMIT! TERIMA SEMUA!
+    const donationId = generateDonationId(donation);
+    donationQueue[userKey].push({
+        id: donationId,
+        data: donation,
+        timestamp: Date.now()
+    });
+    
+    console.log(`📥 [${userKey}] Added to queue. Queue size: ${donationQueue[userKey].length} 🚀`);
+    
+    // Auto-promote if no active donation
+    if (!donations[userKey]) {
+        promoteFromQueue(userKey);
+    }
+}
+
+function promoteFromQueue(userKey) {
+    if (!donationQueue[userKey] || donationQueue[userKey].length === 0) {
+        return false;
+    }
+    
+    const next = donationQueue[userKey].shift();
+    donations[userKey] = next.data;
+    timestamps[userKey] = Date.now();
+    
+    console.log(`⬆️ [${userKey}] Promoted from queue:`, next.data.donor_name, '-', next.data.amount, 'IDR');
+    console.log(`   💰 Remaining in queue: ${donationQueue[userKey].length}`);
+    
+    return true;
+}
 
 // ════════════════════════════════════════════════════════════
 // 🎯 WEBHOOK PARSERS (All Platforms + BagiBagi)
@@ -165,7 +270,7 @@ function autoDetectPlatform(data) {
 }
 
 // ════════════════════════════════════════════════════════════
-// 📨 MULTI USER WEBHOOK
+// 📨 UNLIMITED WEBHOOK - TERIMA SEMUA!
 // ════════════════════════════════════════════════════════════
 
 app.post('/donation/:key/webhook', (req, res) => {
@@ -190,33 +295,18 @@ app.post('/donation/:key/webhook', (req, res) => {
         return res.status(400).json({ error: 'INVALID_AMOUNT' });
     }
     
-    // Anti-spam check
-    if (timestamps[userKey]) {
-        const elapsed = Date.now() - timestamps[userKey];
-        if (elapsed < MIN_DONATION_INTERVAL) {
-            console.log(`⚠️ Rate limited (${elapsed}ms)`);
-            console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
-            return res.status(429).json({ error: 'RATE_LIMITED' });
-        }
+    // VERY LIGHT duplicate check (cuma yang bener2 sama dalam 3 detik)
+    if (isDuplicate(userKey, donation)) {
+        console.log('⚠️ Exact duplicate in last 3s, ignoring');
+        console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
+        return res.status(200).json({ 
+            success: true, 
+            message: 'Duplicate',
+            queued: false 
+        });
     }
     
-    // Check duplicate
-    if (donations[userKey]) {
-        const pending = donations[userKey];
-        if (pending.platform === donation.platform &&
-            pending.donor_name === donation.donor_name &&
-            pending.amount === donation.amount) {
-            console.log('⚠️ Duplicate pending donation');
-            console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
-            return res.status(429).json({ error: 'DUPLICATE_PENDING' });
-        }
-    }
-    
-    // Save donation
-    donations[userKey] = donation;
-    timestamps[userKey] = Date.now();
-    
-    console.log('✅ Donation saved:');
+    console.log('✅ Donation accepted:');
     console.log('   Platform:', donation.platform);
     console.log('   Donor:', donation.donor_name);
     console.log('   Amount:', donation.amount, 'IDR');
@@ -227,9 +317,29 @@ app.post('/donation/:key/webhook', (req, res) => {
     if (donation.koin) {
         console.log('   Koin:', donation.koin);
     }
+    
+    // If there's already an active donation, ALWAYS QUEUE
+    if (donations[userKey]) {
+        console.log('   📥 Queuing (active donation exists)');
+        addToQueue(userKey, donation);
+        markAsProcessed(userKey, donation);
+        console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
+        return res.status(200).json({ 
+            success: true, 
+            queued: true,
+            queuePosition: donationQueue[userKey]?.length || 0
+        });
+    }
+    
+    // Save as active donation
+    donations[userKey] = donation;
+    timestamps[userKey] = Date.now();
+    markAsProcessed(userKey, donation);
+    
+    console.log('   ✅ Set as active donation');
     console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
     
-    res.status(200).json({ success: true });
+    res.status(200).json({ success: true, queued: false });
 });
 
 // ════════════════════════════════════════════════════════════
@@ -262,7 +372,7 @@ app.get('/donation/:key/data', (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════
-// 🗑️ ROBLOX - CLEAR DONATION
+// 🗑️ ROBLOX - CLEAR DONATION (AUTO-PROMOTE!)
 // ════════════════════════════════════════════════════════════
 
 app.delete('/donation/:key/clear', (req, res) => {
@@ -274,9 +384,20 @@ app.delete('/donation/:key/clear', (req, res) => {
     
     console.log(`🗑️ [${userKey}] Cleared:`, donations[userKey].donor_name);
     delete donations[userKey];
-    delete timestamps[userKey];
     
-    res.json({ success: true });
+    // Auto-promote next donation from queue
+    const promoted = promoteFromQueue(userKey);
+    
+    const queueSize = donationQueue[userKey]?.length || 0;
+    if (queueSize > 0) {
+        console.log(`   💰 ${queueSize} donations still in queue!`);
+    }
+    
+    res.json({ 
+        success: true,
+        promoted: promoted,
+        queueSize: queueSize
+    });
 });
 
 // ════════════════════════════════════════════════════════════
@@ -289,41 +410,89 @@ app.get('/donation/:key/status', (req, res) => {
     res.json({
         has_pending: !!donations[userKey],
         donation: donations[userKey] || null,
+        queue_size: donationQueue[userKey]?.length || 0,
+        queue: donationQueue[userKey] || [],
         last_timestamp: timestamps[userKey] || null,
-        override_enabled: USER_OVERRIDES[userKey]?.enabled || false
+        override_enabled: USER_OVERRIDES[userKey]?.enabled || false,
+        processed_count: processedIds[userKey]?.length || 0
     });
 });
 
 app.post('/donation/:key/force-clear', (req, res) => {
     const userKey = req.params.key;
     
+    const cleared = {
+        donation: !!donations[userKey],
+        queue: donationQueue[userKey]?.length || 0
+    };
+    
     if (donations[userKey]) {
-        console.log(`🔨 [${userKey}] Force clearing`);
+        console.log(`🔨 [${userKey}] Force clearing donation`);
         delete donations[userKey];
         delete timestamps[userKey];
-        res.json({ success: true });
-    } else {
-        res.status(404).json({ error: 'NO_DONATION' });
     }
+    
+    if (donationQueue[userKey]) {
+        console.log(`🔨 [${userKey}] Force clearing queue (${donationQueue[userKey].length} items)`);
+        delete donationQueue[userKey];
+    }
+    
+    res.json({ success: true, cleared });
 });
 
 // ════════════════════════════════════════════════════════════
-// 🧹 AUTO-CLEANUP
+// 🧹 AUTO-CLEANUP (MINIMAL)
 // ════════════════════════════════════════════════════════════
 
 setInterval(() => {
     const now = Date.now();
     
+    // Cleanup VERY stuck donations only (60s+)
     for (const userKey in timestamps) {
         const elapsed = now - timestamps[userKey];
         
         if (elapsed > DONATION_TIMEOUT && donations[userKey]) {
             console.log(`⚠️ [${userKey}] Auto-clearing stuck donation (${Math.floor(elapsed/1000)}s old)`);
             delete donations[userKey];
-            delete timestamps[userKey];
+            
+            // Auto-promote from queue
+            promoteFromQueue(userKey);
         }
     }
-}, 10000);
+    
+    // Cleanup old processed IDs (keep memory clean)
+    for (const userKey in processedIds) {
+        processedIds[userKey] = processedIds[userKey].filter(item => {
+            return (now - item.timestamp) < DUPLICATE_CHECK_WINDOW;
+        });
+        
+        if (processedIds[userKey].length === 0) {
+            delete processedIds[userKey];
+        }
+    }
+}, 10000); // Check every 10 seconds
+
+// ════════════════════════════════════════════════════════════
+// 📊 STATS ENDPOINT
+// ════════════════════════════════════════════════════════════
+
+app.get('/stats', (req, res) => {
+    const stats = {
+        active_donations: Object.keys(donations).length,
+        total_queued: Object.values(donationQueue).reduce((sum, q) => sum + q.length, 0),
+        users_with_queue: Object.keys(donationQueue).length,
+        total_processed: Object.values(processedIds).reduce((sum, arr) => sum + arr.length, 0),
+        uptime: process.uptime(),
+        queue_details: {}
+    };
+    
+    // Detail per user
+    for (const userKey in donationQueue) {
+        stats.queue_details[userKey] = donationQueue[userKey].length;
+    }
+    
+    res.json(stats);
+});
 
 // ════════════════════════════════════════════════════════════
 // 🚀 START SERVER
@@ -331,7 +500,7 @@ setInterval(() => {
 
 app.listen(PORT, () => {
     console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('🚀 MULTI-PLATFORM DONATION SERVER - PRODUCTION');
+    console.log('🚀 UNLIMITED DONATION SERVER - PRODUCTION MODE');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log(`📡 Server: http://localhost:${PORT}`);
     console.log('');
@@ -343,6 +512,14 @@ app.listen(PORT, () => {
     console.log('');
     console.log('🔧 Admin:   GET  /donation/:key/status');
     console.log('           POST /donation/:key/force-clear');
+    console.log('📊 Stats:   GET  /stats');
     console.log('');
+    console.log('💎 UNLIMITED FEATURES:');
+    console.log('   • NO queue size limit!');
+    console.log('   • NO rate limiting!');
+    console.log('   • Minimal duplicate check (3s exact match only)');
+    console.log('   • Super fast processing (100ms interval)');
+    console.log('   • Auto-promotion from queue');
+    console.log('   • Spam-friendly! 🎉');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 });
