@@ -121,25 +121,6 @@ class DonationStore {
 
 const store = new DonationStore();
 
-function verifyHmacSignature(hmacSecret, payload, signature, timestamp) {
-    if (!hmacSecret) return false;
-
-    const now = Math.floor(Date.now() / 1000);
-    const requestTime = parseInt(timestamp);
-    if (Math.abs(now - requestTime) > 300) return false;
-
-    const signedPayload = `${timestamp}.${JSON.stringify(payload)}`;
-    const expectedSignature = crypto
-        .createHmac('sha256', hmacSecret)
-        .update(signedPayload)
-        .digest('hex');
-
-    return crypto.timingSafeEqual(
-        Buffer.from(signature),
-        Buffer.from(expectedSignature)
-    );
-}
-
 function verifyApiKey(expectedKey, providedKey) {
     if (!expectedKey) return false;
     return crypto.timingSafeEqual(
@@ -178,26 +159,6 @@ async function requireApiKey(req, res, next) {
         return res.status(403).json({ 
             error: 'INVALID_API_KEY',
             message: 'Invalid API key'
-        });
-    }
-    next();
-}
-
-async function requireHmac(req, res, next) {
-    const signature = req.headers['x-webhook-signature'];
-    const timestamp = req.headers['x-webhook-timestamp'];
-    
-    if (!signature || !timestamp) {
-        return res.status(401).json({ 
-            error: 'MISSING_SIGNATURE',
-            message: 'Webhook signature and timestamp required'
-        });
-    }
-    
-    if (!verifyHmacSignature(req.userConfig.hmacSecret, req.body, signature, timestamp)) {
-        return res.status(403).json({ 
-            error: 'INVALID_SIGNATURE',
-            message: 'Invalid webhook signature'
         });
     }
     next();
@@ -398,16 +359,28 @@ function autoDetectPlatform(data) {
     return null;
 }
 
+// ═══════════════════════════════════════════════════════════
+// 📨 WEBHOOK ENDPOINT - NO HMAC VERIFICATION!
+// ═══════════════════════════════════════════════════════════
+
 app.post('/donation/:key/webhook', 
     validateUserKey,
     createUserRateLimiter,
-    requireHmac,
+    // NO requireHmac middleware!
     (req, res) => {
         const userKey = req.params.key;
         const config = req.userConfig;
+        
+        console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+        console.log(`📨 [${userKey}] Webhook received (NO HMAC)`);
+        console.log(`🕒 ${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}`);
+        console.log(`📦 Body:`, JSON.stringify(req.body, null, 2));
+        
         const donation = autoDetectPlatform(req.body);
         
         if (!donation) {
+            console.log('❌ Could not parse donation data');
+            console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
             return res.status(400).json({ 
                 error: 'INVALID_DONATION_DATA',
                 message: 'Could not parse donation data'
@@ -415,6 +388,8 @@ app.post('/donation/:key/webhook',
         }
         
         if (!donation.amount || donation.amount <= 0) {
+            console.log('❌ Invalid amount:', donation.amount);
+            console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
             return res.status(400).json({ 
                 error: 'INVALID_AMOUNT',
                 message: 'Amount must be greater than 0'
@@ -422,6 +397,8 @@ app.post('/donation/:key/webhook',
         }
         
         if (isDuplicate(userKey, donation)) {
+            console.log('⚠️ Duplicate donation, ignoring');
+            console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
             return res.status(200).json({ 
                 success: true, 
                 message: 'Duplicate ignored',
@@ -429,12 +406,20 @@ app.post('/donation/:key/webhook',
             });
         }
         
+        console.log('✅ Donation accepted:');
+        console.log('   Platform:', donation.platform);
+        console.log('   Donor:', donation.donor_name);
+        console.log('   Amount:', donation.amount, 'IDR');
+        console.log('   Message:', donation.message || '(no message)');
+        
         store.updateStats(userKey, 'received');
         
         if (store.donations.has(userKey)) {
             const result = addToQueue(userKey, donation, config.maxQueueSize);
             
             if (!result.success) {
+                console.log('❌ Queue is full!');
+                console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
                 return res.status(429).json({ 
                     error: 'QUEUE_FULL',
                     message: 'Donation queue is full'
@@ -442,6 +427,8 @@ app.post('/donation/:key/webhook',
             }
             
             markAsProcessed(userKey, donation);
+            console.log('📥 Queued (position:', result.queueSize, ')');
+            console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
             return res.status(200).json({ 
                 success: true, 
                 queued: true,
@@ -452,6 +439,9 @@ app.post('/donation/:key/webhook',
         store.donations.set(userKey, donation);
         store.timestamps.set(userKey, Date.now());
         markAsProcessed(userKey, donation);
+        
+        console.log('✅ Set as active donation');
+        console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
         
         res.status(200).json({ success: true, queued: false });
     }
@@ -588,14 +578,12 @@ app.post('/admin/users/register',
 
             const userKey = generateUserKey();
             const apiKey = `sk_live_${crypto.randomBytes(24).toString('hex')}`;
-            const hmacSecret = `whsec_${crypto.randomBytes(24).toString('hex')}`;
 
             const config = {
                 robloxId,
                 discordId,
                 discordUsername: discordUsername || 'Unknown',
                 apiKey,
-                hmacSecret,
                 maxQueueSize: 100,
                 rateLimit: {
                     windowMs: 60000,
@@ -613,7 +601,6 @@ app.post('/admin/users/register',
                 success: true,
                 userKey,
                 apiKey,
-                hmacSecret,
                 webhookUrl: `${req.protocol}://${req.get('host')}/donation/${userKey}/webhook`,
                 config
             });
@@ -796,7 +783,25 @@ app.use((req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-    console.log('Donation webhook server ready');
-    console.log('Set MASTER_API_KEY environment variable for admin access');
+    console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('🚀 DONATION WEBHOOK SERVER - NO HMAC MODE');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log(`📡 Server: http://localhost:${PORT}`);
+    console.log('');
+    console.log('🎯 Supported Platforms:');
+    console.log('   • BagiBagi');
+    console.log('   • Saweria');
+    console.log('   • SociaBuzz');
+    console.log('   • Trakteer');
+    console.log('   • Tako');
+    console.log('');
+    console.log('📨 Webhook: POST /donation/:key/webhook (NO HMAC!)');
+    console.log('🎮 Roblox:  GET  /donation/:key/data (API Key)');
+    console.log('           DELETE /donation/:key/clear (API Key)');
+    console.log('');
+    console.log('⚠️  SECURITY NOTE:');
+    console.log('   - Webhook accepts ALL requests (no HMAC)');
+    console.log('   - Protected by rate limiting only');
+    console.log('   - GET/DELETE require API Key');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 });
