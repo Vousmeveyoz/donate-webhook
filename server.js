@@ -22,16 +22,13 @@ app.use((req, res, next) => {
 });
 
 const USERS_FILE = path.join(__dirname, 'users.json');
-const KEY_LENGTH = 4;
-const KEY_SECTIONS = 4;
-const KEY_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
 function generateUserKey() {
     const section = () => 
-        Array.from({ length: KEY_LENGTH }, () => 
-            KEY_CHARS[Math.floor(Math.random() * KEY_CHARS.length)]
+        Array.from({ length: 4 }, () => 
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"[Math.floor(Math.random() * 36)]
         ).join("");
-    return Array.from({ length: KEY_SECTIONS }, section).join("-");
+    return Array.from({ length: 4 }, section).join("-");
 }
 
 async function loadUsers() {
@@ -39,9 +36,7 @@ async function loadUsers() {
         const data = await fs.readFile(USERS_FILE, 'utf8');
         return JSON.parse(data);
     } catch (err) {
-        if (err.code === 'ENOENT') {
-            return { users: {} };
-        }
+        if (err.code === 'ENOENT') return { users: {} };
         throw err;
     }
 }
@@ -93,16 +88,6 @@ class DonationStore {
                 lastActivity: Date.now()
             });
         }
-    }
-
-    async getUserConfig(userKey) {
-        return await getUserConfig(userKey);
-    }
-
-    isQueueFull(userKey, config) {
-        if (!config) return true;
-        const queue = this.queues.get(userKey) || [];
-        return queue.length >= config.maxQueueSize;
     }
 
     updateStats(userKey, action) {
@@ -174,27 +159,14 @@ async function requireApiKey(req, res, next) {
     next();
 }
 
-const webhookLimiter = rateLimit({
-    windowMs: 60000,
-    max: 60,
-    message: {
-        error: 'RATE_LIMIT_EXCEEDED',
-        message: 'Too many requests. Max 60 per minute.'
-    },
-    standardHeaders: true,
-    legacyHeaders: false,
-});
-
 const globalLimiter = rateLimit({
     windowMs: 60000,
-    max: 100,
-    message: { error: 'RATE_LIMIT_EXCEEDED' }
+    max: 100
 });
 
 const adminLimiter = rateLimit({
     windowMs: 60000,
-    max: 20,
-    message: { error: 'RATE_LIMIT_EXCEEDED' }
+    max: 20
 });
 
 function generateDonationId(donation) {
@@ -364,7 +336,6 @@ function autoDetectPlatform(data) {
 
 app.post('/donation/:key/webhook', 
     validateUserKey,
-    webhookLimiter,
     (req, res) => {
         const userKey = req.params.key;
         const config = req.userConfig;
