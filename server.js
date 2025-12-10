@@ -558,7 +558,7 @@ app.post('/donation/:key/force-clear',
     }
 );
 
-const MASTER_API_KEY = process.env.MASTER_API_KEY || 'master_key_change_this_in_production';
+const MASTER_API_KEY = process.env.MASTER_API_KEY || 'cf0019eebe678e7a47c87405e41e139c1e441c0ecac0eea06b54e52c6db2fa50';
 
 function requireMasterKey(req, res, next) {
     const apiKey = req.headers['x-master-key'];
