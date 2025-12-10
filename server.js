@@ -11,19 +11,10 @@ app.use(helmet());
 app.use(express.json({ limit: '100kb' }));
 app.set('trust proxy', 1);
 
-const ALLOWED_ORIGINS = [
-    'https://blokmarket.xyz',
-    'https://donate.blokmarket.xyz',
-    'https://www.blokmarket.xyz'
-];
-
 app.use((req, res, next) => {
-    const origin = req.headers.origin;
-    if (ALLOWED_ORIGINS.includes(origin)) {
-        res.header('Access-Control-Allow-Origin', origin);
-    }
+    res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, X-Master-Key, Authorization');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization');
     if (req.method === 'OPTIONS') {
         return res.sendStatus(200);
     }
@@ -31,12 +22,6 @@ app.use((req, res, next) => {
 });
 
 const USERS_FILE = path.join(__dirname, 'users.json');
-const MASTER_API_KEY = process.env.MASTER_API_KEY;
-
-if (!MASTER_API_KEY) {
-    console.error('ERROR: MASTER_API_KEY not set in environment variables');
-    process.exit(1);
-}
 
 function generateUserKey() {
     const section = () => 
@@ -132,8 +117,7 @@ class DonationStore {
 const store = new DonationStore();
 
 function verifyApiKey(expectedKey, providedKey) {
-    if (!expectedKey || !providedKey) return false;
-    if (expectedKey.length !== providedKey.length) return false;
+    if (!expectedKey) return false;
     return crypto.timingSafeEqual(
         Buffer.from(providedKey),
         Buffer.from(expectedKey)
@@ -142,14 +126,6 @@ function verifyApiKey(expectedKey, providedKey) {
 
 async function validateUserKey(req, res, next) {
     const userKey = req.params.key;
-    
-    if (!userKey || !/^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(userKey)) {
-        return res.status(400).json({ 
-            error: 'INVALID_KEY_FORMAT',
-            message: 'Invalid user key format'
-        });
-    }
-    
     const config = await getUserConfig(userKey);
     
     if (!config) {
@@ -192,33 +168,6 @@ const adminLimiter = rateLimit({
     windowMs: 60000,
     max: 20
 });
-
-function validateDonationInput(req, res, next) {
-    const body = req.body;
-    
-    if (body.amount && (body.amount > 1000000000 || body.amount < 0)) {
-        return res.status(400).json({ 
-            error: 'INVALID_AMOUNT',
-            message: 'Amount out of valid range'
-        });
-    }
-    
-    if (body.donor_name && body.donor_name.length > 100) {
-        return res.status(400).json({ 
-            error: 'INVALID_INPUT',
-            message: 'Donor name too long'
-        });
-    }
-    
-    if (body.message && body.message.length > 500) {
-        return res.status(400).json({ 
-            error: 'INVALID_INPUT',
-            message: 'Message too long'
-        });
-    }
-    
-    next();
-}
 
 function generateDonationId(donation) {
     const timestamp = Date.now();
@@ -387,7 +336,6 @@ function autoDetectPlatform(data) {
 
 app.post('/donation/:key/webhook', 
     validateUserKey,
-    validateDonationInput,
     (req, res) => {
         const userKey = req.params.key;
         const config = req.userConfig;
@@ -545,17 +493,12 @@ app.post('/donation/:key/force-clear',
     }
 );
 
+const MASTER_API_KEY = process.env.MASTER_API_KEY || 'cf0019eebe678e7a47c87405e41e139c1e441c0ecac0eea06b54e52c6db2fa50';
+
 function requireMasterKey(req, res, next) {
     const apiKey = req.headers['x-master-key'];
     
-    if (!apiKey) {
-        return res.status(401).json({ 
-            error: 'MISSING_KEY',
-            message: 'Master API key required'
-        });
-    }
-    
-    if (!verifyApiKey(MASTER_API_KEY, apiKey)) {
+    if (!apiKey || apiKey !== MASTER_API_KEY) {
         return res.status(403).json({ 
             error: 'FORBIDDEN',
             message: 'Invalid master API key'
@@ -564,30 +507,9 @@ function requireMasterKey(req, res, next) {
     next();
 }
 
-function validateAdminInput(req, res, next) {
-    const { robloxId, discordId } = req.body;
-    
-    if (robloxId && (typeof robloxId !== 'string' || robloxId.length > 50)) {
-        return res.status(400).json({
-            error: 'INVALID_INPUT',
-            message: 'Invalid robloxId'
-        });
-    }
-    
-    if (discordId && (typeof discordId !== 'string' || discordId.length > 50)) {
-        return res.status(400).json({
-            error: 'INVALID_INPUT',
-            message: 'Invalid discordId'
-        });
-    }
-    
-    next();
-}
-
 app.post('/admin/users/register',
     adminLimiter,
     requireMasterKey,
-    validateAdminInput,
     async (req, res) => {
         try {
             const { robloxId, discordId, discordUsername } = req.body;
@@ -631,7 +553,7 @@ app.post('/admin/users/register',
         } catch (err) {
             res.status(500).json({
                 error: 'REGISTRATION_FAILED',
-                message: 'Internal server error'
+                message: err.message
             });
         }
     }
@@ -658,7 +580,7 @@ app.get('/admin/users/list',
         } catch (err) {
             res.status(500).json({
                 error: 'FETCH_FAILED',
-                message: 'Internal server error'
+                message: err.message
             });
         }
     }
@@ -687,7 +609,7 @@ app.get('/admin/users/:key',
         } catch (err) {
             res.status(500).json({
                 error: 'FETCH_FAILED',
-                message: 'Internal server error'
+                message: err.message
             });
         }
     }
@@ -724,7 +646,7 @@ app.delete('/admin/users/:key',
         } catch (err) {
             res.status(500).json({
                 error: 'DELETE_FAILED',
-                message: 'Internal server error'
+                message: err.message
             });
         }
     }
