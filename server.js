@@ -359,28 +359,16 @@ function autoDetectPlatform(data) {
     return null;
 }
 
-// ═══════════════════════════════════════════════════════════
-// 📨 WEBHOOK ENDPOINT - NO HMAC VERIFICATION!
-// ═══════════════════════════════════════════════════════════
-
 app.post('/donation/:key/webhook', 
     validateUserKey,
     createUserRateLimiter,
-    // NO requireHmac middleware!
     (req, res) => {
         const userKey = req.params.key;
         const config = req.userConfig;
         
-        console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-        console.log(`📨 [${userKey}] Webhook received (NO HMAC)`);
-        console.log(`🕒 ${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}`);
-        console.log(`📦 Body:`, JSON.stringify(req.body, null, 2));
-        
         const donation = autoDetectPlatform(req.body);
         
         if (!donation) {
-            console.log('❌ Could not parse donation data');
-            console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
             return res.status(400).json({ 
                 error: 'INVALID_DONATION_DATA',
                 message: 'Could not parse donation data'
@@ -388,8 +376,6 @@ app.post('/donation/:key/webhook',
         }
         
         if (!donation.amount || donation.amount <= 0) {
-            console.log('❌ Invalid amount:', donation.amount);
-            console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
             return res.status(400).json({ 
                 error: 'INVALID_AMOUNT',
                 message: 'Amount must be greater than 0'
@@ -397,8 +383,6 @@ app.post('/donation/:key/webhook',
         }
         
         if (isDuplicate(userKey, donation)) {
-            console.log('⚠️ Duplicate donation, ignoring');
-            console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
             return res.status(200).json({ 
                 success: true, 
                 message: 'Duplicate ignored',
@@ -406,20 +390,12 @@ app.post('/donation/:key/webhook',
             });
         }
         
-        console.log('✅ Donation accepted:');
-        console.log('   Platform:', donation.platform);
-        console.log('   Donor:', donation.donor_name);
-        console.log('   Amount:', donation.amount, 'IDR');
-        console.log('   Message:', donation.message || '(no message)');
-        
         store.updateStats(userKey, 'received');
         
         if (store.donations.has(userKey)) {
             const result = addToQueue(userKey, donation, config.maxQueueSize);
             
             if (!result.success) {
-                console.log('❌ Queue is full!');
-                console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
                 return res.status(429).json({ 
                     error: 'QUEUE_FULL',
                     message: 'Donation queue is full'
@@ -427,8 +403,6 @@ app.post('/donation/:key/webhook',
             }
             
             markAsProcessed(userKey, donation);
-            console.log('📥 Queued (position:', result.queueSize, ')');
-            console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
             return res.status(200).json({ 
                 success: true, 
                 queued: true,
@@ -439,9 +413,6 @@ app.post('/donation/:key/webhook',
         store.donations.set(userKey, donation);
         store.timestamps.set(userKey, Date.now());
         markAsProcessed(userKey, donation);
-        
-        console.log('✅ Set as active donation');
-        console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
         
         res.status(200).json({ success: true, queued: false });
     }
@@ -606,7 +577,6 @@ app.post('/admin/users/register',
             });
 
         } catch (err) {
-            console.error('Registration error:', err);
             res.status(500).json({
                 error: 'REGISTRATION_FAILED',
                 message: err.message
@@ -768,7 +738,6 @@ setInterval(() => {
 }, 10000);
 
 app.use((err, req, res, next) => {
-    console.error('Server error:', err);
     res.status(500).json({ 
         error: 'INTERNAL_SERVER_ERROR',
         message: 'An unexpected error occurred'
@@ -783,25 +752,5 @@ app.use((req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('🚀 DONATION WEBHOOK SERVER - NO HMAC MODE');
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log(`📡 Server: http://localhost:${PORT}`);
-    console.log('');
-    console.log('🎯 Supported Platforms:');
-    console.log('   • BagiBagi');
-    console.log('   • Saweria');
-    console.log('   • SociaBuzz');
-    console.log('   • Trakteer');
-    console.log('   • Tako');
-    console.log('');
-    console.log('📨 Webhook: POST /donation/:key/webhook (NO HMAC!)');
-    console.log('🎮 Roblox:  GET  /donation/:key/data (API Key)');
-    console.log('           DELETE /donation/:key/clear (API Key)');
-    console.log('');
-    console.log('⚠️  SECURITY NOTE:');
-    console.log('   - Webhook accepts ALL requests (no HMAC)');
-    console.log('   - Protected by rate limiting only');
-    console.log('   - GET/DELETE require API Key');
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    console.log(`Server running on port ${PORT}`);
 });
