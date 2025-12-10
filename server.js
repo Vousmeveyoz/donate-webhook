@@ -11,6 +11,16 @@ app.use(helmet());
 app.use(express.json({ limit: '100kb' }));
 app.set('trust proxy', 1);
 
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization');
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+    next();
+});
+
 const USERS_FILE = path.join(__dirname, 'users.json');
 const KEY_LENGTH = 4;
 const KEY_SECTIONS = 4;
@@ -164,23 +174,17 @@ async function requireApiKey(req, res, next) {
     next();
 }
 
-function createUserRateLimiter(req, res, next) {
-    const config = req.userConfig;
-    
-    const limiter = rateLimit({
-        windowMs: config.rateLimit.windowMs,
-        max: config.rateLimit.maxRequests,
-        message: {
-            error: 'RATE_LIMIT_EXCEEDED',
-            message: `Too many requests. Max ${config.rateLimit.maxRequests} per minute.`
-        },
-        keyGenerator: (req) => `${req.params.key}-${req.ip}`,
-        standardHeaders: true,
-        legacyHeaders: false,
-    });
-    
-    limiter(req, res, next);
-}
+const webhookLimiter = rateLimit({
+    windowMs: 60000,
+    max: 60,
+    message: {
+        error: 'RATE_LIMIT_EXCEEDED',
+        message: 'Too many requests. Max 60 per minute.'
+    },
+    keyGenerator: (req) => `${req.params.key}-${req.ip}`,
+    standardHeaders: true,
+    legacyHeaders: false,
+});
 
 const globalLimiter = rateLimit({
     windowMs: 60000,
@@ -361,7 +365,7 @@ function autoDetectPlatform(data) {
 
 app.post('/donation/:key/webhook', 
     validateUserKey,
-    createUserRateLimiter,
+    webhookLimiter,
     (req, res) => {
         const userKey = req.params.key;
         const config = req.userConfig;
