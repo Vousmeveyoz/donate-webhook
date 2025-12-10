@@ -181,7 +181,6 @@ const webhookLimiter = rateLimit({
         error: 'RATE_LIMIT_EXCEEDED',
         message: 'Too many requests. Max 60 per minute.'
     },
-    keyGenerator: (req) => `${req.params.key}-${req.ip}`,
     standardHeaders: true,
     legacyHeaders: false,
 });
