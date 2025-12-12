@@ -263,11 +263,17 @@ function sanitizeAmount(amount) {
 function parseBagiBagi(data) {
     return {
         platform: 'bagibagi',
-        donor_name: sanitizeString(data.donor_name || 'BagiBagi Donor'),
+        donor_name: sanitizeString(
+            data.userName || 
+            data.user_name || 
+            data.name || 
+            'Anonymous'
+        ),
         amount: sanitizeAmount(data.amount),
         message: sanitizeString(data.message || '', 500),
-        transaction_id: sanitizeString(data.transaction_id || 'unknown', 100),
-        koin: parseInt(data.koin) || 0
+        transaction_id: sanitizeString(data.transaction_id || data.trx_id || 'unknown', 100),
+        isVerified: data.isVerified || false,
+        isAnonymous: data.isAnonymous || false
     };
 }
 
@@ -308,9 +314,19 @@ function parseTako(data) {
 }
 
 function autoDetectPlatform(data) {
-    if (data.platform === 'bagibagi' || data.transaction_id) return parseBagiBagi(data);
+    // Deteksi BagiBagi - cek field userName atau isAnonymous sebagai indikator
+    if (data.platform === 'bagibagi' || 
+        data.userName ||
+        data.isAnonymous !== undefined ||
+        data.isVerified !== undefined) {
+        return parseBagiBagi(data);
+    }
+    
+    // Deteksi Saweria
     if (data.version && (data.donator_name || data.donatur_name)) return parseSaweria(data);
     if (data.donator_name || data.donatur_name) return parseSaweria(data);
+    
+    // Deteksi Sociabuzz
     if (data.supporter && (data.email_supporter || data.currency === 'IDR')) return parseSociabuzz(data);
     if (data.content?.link?.includes('sociabuzz.com')) return parseSociabuzz(data);
     
