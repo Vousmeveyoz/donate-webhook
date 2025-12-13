@@ -260,7 +260,7 @@ function sanitizeAmount(amount) {
     return isNaN(num) || num < 0 ? 0 : Math.min(num, 1000000000);
 }
 
-// ✅ FIXED: Updated parseBagiBagi with better field handling
+// ✅ FIXED: Parse BagiBagi dengan field handling yang benar
 function parseBagiBagi(data) {
     console.log('📦 Parsing BagiBagi data:', JSON.stringify(data, null, 2));
     
@@ -269,8 +269,6 @@ function parseBagiBagi(data) {
         donor_name: sanitizeString(
             data.userName || 
             data.user_name || 
-            data.donor_name ||
-            data.donator_name ||
             data.name || 
             'Anonymous'
         ),
@@ -283,7 +281,6 @@ function parseBagiBagi(data) {
             'unknown', 
             100
         ),
-        // ✅ Boolean fields dengan default false
         isVerified: data.isVerified === true,
         isAnonymous: data.isAnonymous === true
     };
@@ -329,12 +326,12 @@ function parseTako(data) {
     };
 }
 
-// ✅ CRITICAL FIX: Prioritize BagiBagi field detection BEFORE platform field
+// ✅ CRITICAL FIX: Prioritas deteksi BagiBagi SEBELUM cek platform field
 function autoDetectPlatform(data) {
     console.log('========== AUTO DETECT PLATFORM ==========');
     console.log('Raw data:', JSON.stringify(data, null, 2));
     
-    // ✅ PRIORITAS 1: Deteksi BagiBagi dari field EKSKLUSIF (SEBELUM CEK PLATFORM!)
+    // ✅ PRIORITAS 1: Deteksi BagiBagi dari field EKSKLUSIF
     // Field userName, isVerified, atau isAnonymous HANYA ada di BagiBagi
     if (data.userName !== undefined || 
         data.isVerified !== undefined || 
@@ -346,21 +343,14 @@ function autoDetectPlatform(data) {
         return parseBagiBagi(data);
     }
     
-    // ✅ PRIORITAS 2: Deteksi BagiBagi dari donor name "Seseorang" (default BagiBagi)
-    const donorName = data.donor_name || data.donator_name || data.name || '';
-    if (donorName === 'Seseorang') {
-        console.log('✅ BAGIBAGI detected from default donor name "Seseorang"');
-        return parseBagiBagi(data);
-    }
-    
-    // ✅ PRIORITAS 3: Cek explicit platform = "bagibagi"
+    // ✅ PRIORITAS 2: Cek explicit platform = "bagibagi"
     const platformLower = (data.platform || '').toLowerCase();
     if (platformLower === 'bagibagi' || platformLower.includes('bagi')) {
         console.log('✅ BAGIBAGI detected from platform field');
         return parseBagiBagi(data);
     }
     
-    // Deteksi Saweria - donatur_name/donator_name
+    // Deteksi Saweria
     if (data.version && (data.donator_name || data.donatur_name)) {
         console.log('✅ SAWERIA detected (version + donator_name)');
         return parseSaweria(data);
@@ -370,7 +360,7 @@ function autoDetectPlatform(data) {
         return parseSaweria(data);
     }
     
-    // ⚠️ Deteksi Sociabuzz - supporter field (TANPA field BagiBagi)
+    // Deteksi Sociabuzz
     if (data.supporter && (data.email_supporter || data.currency === 'IDR')) {
         console.log('✅ SOCIABUZZ detected (supporter + email/currency)');
         return parseSociabuzz(data);
@@ -380,7 +370,7 @@ function autoDetectPlatform(data) {
         return parseSociabuzz(data);
     }
     
-    // Platform string fallback - HANYA jika tidak ada field BagiBagi
+    // Platform string fallback
     if (platformLower === 'sociabuzz' || platformLower === 'buzz') {
         console.log('✅ SOCIABUZZ detected from platform field');
         return parseSociabuzz(data);
@@ -414,14 +404,13 @@ function autoDetectPlatform(data) {
         }
     }
     
-    // Generic field detection (last resort)
+    // Generic field detection
     if (data.supporter_name && data.price) {
         console.log('✅ TRAKTEER detected (supporter_name + price)');
         return parseTrakteer(data);
     }
-    // SociaBuzz: supporter field TANPA field BagiBagi
     if (data.supporter && data.amount && !data.userName && data.isVerified === undefined) {
-        console.log('✅ SOCIABUZZ detected (supporter + amount, no BagiBagi fields)');
+        console.log('✅ SOCIABUZZ detected (supporter + amount)');
         return parseSociabuzz(data);
     }
     if (data.supporter_name) {
@@ -438,6 +427,7 @@ function autoDetectPlatform(data) {
     return null;
 }
 
+// ✅ WEBHOOK HANDLER dengan support BagiBagi array format
 app.post('/donation/:key/webhook', 
     validateUserKey,
     (req, res) => {
@@ -445,8 +435,28 @@ app.post('/donation/:key/webhook',
         const config = req.userConfig;
         
         console.log(`\n📥 Webhook received for user: ${userKey}`);
+        console.log('Raw body:', JSON.stringify(req.body, null, 2));
         
-        const donation = autoDetectPlatform(req.body);
+        let webhookData = req.body;
+        
+        // ✅ HANDLE BAGIBAGI ARRAY FORMAT
+        // BagiBagi mengirim: { data: [...], success: true, message: "Success" }
+        if (webhookData.data && Array.isArray(webhookData.data)) {
+            if (webhookData.data.length === 0) {
+                console.log('⚠️ BagiBagi array is empty, no donation data');
+                return res.status(200).json({ 
+                    success: true, 
+                    message: 'Empty data array',
+                    queued: false 
+                });
+            }
+            
+            console.log('🔄 Detected BagiBagi array format, extracting first item...');
+            webhookData = webhookData.data[0]; // Ambil donasi pertama dari array
+            console.log('Extracted data:', JSON.stringify(webhookData, null, 2));
+        }
+        
+        const donation = autoDetectPlatform(webhookData);
         
         if (!donation) {
             console.log('❌ Failed to parse donation data');
