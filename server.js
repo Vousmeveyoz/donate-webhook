@@ -329,28 +329,31 @@ function parseTako(data) {
     };
 }
 
-// ✅ FIXED: Prioritize BagiBagi field detection FIRST
+// ✅ CRITICAL FIX: Prioritize BagiBagi field detection BEFORE platform field
 function autoDetectPlatform(data) {
     console.log('========== AUTO DETECT PLATFORM ==========');
     console.log('Raw data:', JSON.stringify(data, null, 2));
     
-    // ✅ PRIORITAS TERTINGGI: Deteksi BagiBagi dari field khusus
-    // Field userName, isVerified, atau isAnonymous EKSKLUSIF untuk BagiBagi
-    if (data.userName || 
+    // ✅ PRIORITAS 1: Deteksi BagiBagi dari field EKSKLUSIF (SEBELUM CEK PLATFORM!)
+    // Field userName, isVerified, atau isAnonymous HANYA ada di BagiBagi
+    if (data.userName !== undefined || 
         data.isVerified !== undefined || 
         data.isAnonymous !== undefined) {
-        console.log('✅ BAGIBAGI detected from exclusive fields (userName/isVerified/isAnonymous)');
+        console.log('✅ BAGIBAGI detected from EXCLUSIVE fields');
+        console.log('   - userName:', data.userName);
+        console.log('   - isVerified:', data.isVerified);
+        console.log('   - isAnonymous:', data.isAnonymous);
         return parseBagiBagi(data);
     }
     
-    // ✅ PRIORITAS TINGGI: Deteksi BagiBagi dari donor name "Seseorang" (default BagiBagi)
+    // ✅ PRIORITAS 2: Deteksi BagiBagi dari donor name "Seseorang" (default BagiBagi)
     const donorName = data.donor_name || data.donator_name || data.name || '';
     if (donorName === 'Seseorang') {
         console.log('✅ BAGIBAGI detected from default donor name "Seseorang"');
         return parseBagiBagi(data);
     }
     
-    // ✅ Cek explicit platform = "bagibagi"
+    // ✅ PRIORITAS 3: Cek explicit platform = "bagibagi"
     const platformLower = (data.platform || '').toLowerCase();
     if (platformLower === 'bagibagi' || platformLower.includes('bagi')) {
         console.log('✅ BAGIBAGI detected from platform field');
@@ -377,7 +380,7 @@ function autoDetectPlatform(data) {
         return parseSociabuzz(data);
     }
     
-    // Platform string fallback - SociaBuzz (hanya jika TIDAK ada field BagiBagi)
+    // Platform string fallback - HANYA jika tidak ada field BagiBagi
     if (platformLower === 'sociabuzz' || platformLower === 'buzz') {
         console.log('✅ SOCIABUZZ detected from platform field');
         return parseSociabuzz(data);
@@ -411,7 +414,7 @@ function autoDetectPlatform(data) {
         }
     }
     
-    // Generic field detection
+    // Generic field detection (last resort)
     if (data.supporter_name && data.price) {
         console.log('✅ TRAKTEER detected (supporter_name + price)');
         return parseTrakteer(data);
@@ -426,8 +429,8 @@ function autoDetectPlatform(data) {
         return parseTrakteer(data);
     }
     if (data.name && data.amount) {
-        console.log('⚠️ Generic detection - defaulting to SOCIABUZZ');
-        return parseSociabuzz(data);
+        console.log('⚠️ Generic detection - defaulting to SAWERIA');
+        return parseSaweria(data);
     }
     
     console.log('❌ No platform detected');
