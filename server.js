@@ -343,6 +343,13 @@ function autoDetectPlatform(data) {
         return parseBagiBagi(data);
     }
     
+    // ✅ PRIORITAS TINGGI: Deteksi BagiBagi dari donor name "Seseorang" (default BagiBagi)
+    const donorName = data.donor_name || data.donator_name || data.name || '';
+    if (donorName === 'Seseorang') {
+        console.log('✅ BAGIBAGI detected from default donor name "Seseorang"');
+        return parseBagiBagi(data);
+    }
+    
     // ✅ Cek explicit platform = "bagibagi"
     const platformLower = (data.platform || '').toLowerCase();
     if (platformLower === 'bagibagi' || platformLower.includes('bagi')) {
