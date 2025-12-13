@@ -260,24 +260,37 @@ function sanitizeAmount(amount) {
     return isNaN(num) || num < 0 ? 0 : Math.min(num, 1000000000);
 }
 
+// ✅ FIXED: Updated parseBagiBagi with better field handling
 function parseBagiBagi(data) {
+    console.log('📦 Parsing BagiBagi data:', JSON.stringify(data, null, 2));
+    
     return {
         platform: 'bagibagi',
         donor_name: sanitizeString(
             data.userName || 
             data.user_name || 
+            data.donor_name ||
+            data.donator_name ||
             data.name || 
             'Anonymous'
         ),
         amount: sanitizeAmount(data.amount),
         message: sanitizeString(data.message || '', 500),
-        transaction_id: sanitizeString(data.transaction_id || data.trx_id || 'unknown', 100),
-        isVerified: data.isVerified || false,
-        isAnonymous: data.isAnonymous || false
+        transaction_id: sanitizeString(
+            data.transaction_id || 
+            data.trx_id || 
+            data.id || 
+            'unknown', 
+            100
+        ),
+        // ✅ Boolean fields dengan default false
+        isVerified: data.isVerified === true,
+        isAnonymous: data.isAnonymous === true
     };
 }
 
 function parseSaweria(data) {
+    console.log('💰 Parsing Saweria data');
     return {
         platform: 'saweria',
         donor_name: sanitizeString(data.donator_name || data.donatur_name || 'Anonymous'),
@@ -287,6 +300,7 @@ function parseSaweria(data) {
 }
 
 function parseSociabuzz(data) {
+    console.log('🐝 Parsing Sociabuzz data');
     return {
         platform: 'sociabuzz',
         donor_name: sanitizeString(data.supporter || data.supporter_name || data.name || 'Anonymous'),
@@ -296,6 +310,7 @@ function parseSociabuzz(data) {
 }
 
 function parseTrakteer(data) {
+    console.log('☕ Parsing Trakteer data');
     return {
         platform: 'trakteer',
         donor_name: sanitizeString(data.supporter_name || data.name || 'Anonymous'),
@@ -305,6 +320,7 @@ function parseTrakteer(data) {
 }
 
 function parseTako(data) {
+    console.log('🐙 Parsing Tako data');
     return {
         platform: 'tako',
         donor_name: sanitizeString(data.supporter_name || data.donator_name || data.name || 'Anonymous'),
@@ -313,40 +329,101 @@ function parseTako(data) {
     };
 }
 
+// ✅ FIXED: Prioritize BagiBagi field detection FIRST
 function autoDetectPlatform(data) {
-    // Deteksi BagiBagi - cek field userName atau isAnonymous sebagai indikator
-    if (data.platform === 'bagibagi' || 
-        data.userName ||
-        data.isAnonymous !== undefined ||
-        data.isVerified !== undefined) {
+    console.log('========== AUTO DETECT PLATFORM ==========');
+    console.log('Raw data:', JSON.stringify(data, null, 2));
+    
+    // ✅ PRIORITAS TERTINGGI: Deteksi BagiBagi dari field khusus
+    // Cek field userName, isVerified, atau isAnonymous (field eksklusif BagiBagi)
+    if (data.userName || 
+        data.isVerified !== undefined || 
+        data.isAnonymous !== undefined) {
+        console.log('✅ BAGIBAGI detected from fields (userName/isVerified/isAnonymous)');
+        return parseBagiBagi(data);
+    }
+    
+    // ✅ Cek explicit platform = "bagibagi"
+    const platformLower = (data.platform || '').toLowerCase();
+    if (platformLower === 'bagibagi' || platformLower.includes('bagi')) {
+        console.log('✅ BAGIBAGI detected from platform field');
         return parseBagiBagi(data);
     }
     
     // Deteksi Saweria
-    if (data.version && (data.donator_name || data.donatur_name)) return parseSaweria(data);
-    if (data.donator_name || data.donatur_name) return parseSaweria(data);
-    
-    // Deteksi Sociabuzz
-    if (data.supporter && (data.email_supporter || data.currency === 'IDR')) return parseSociabuzz(data);
-    if (data.content?.link?.includes('sociabuzz.com')) return parseSociabuzz(data);
-    
-    const platform = (data.platform || data.type || '').toLowerCase();
-    if (platform === 'sociabuzz') return parseSociabuzz(data);
-    if (platform === 'saweria') return parseSaweria(data);
-    if (platform === 'trakteer') return parseTrakteer(data);
-    if (platform === 'tako') return parseTako(data);
-    
-    if (data.url) {
-        if (data.url.includes('sociabuzz')) return parseSociabuzz(data);
-        if (data.url.includes('trakteer')) return parseTrakteer(data);
-        if (data.url.includes('saweria')) return parseSaweria(data);
+    if (data.version && (data.donator_name || data.donatur_name)) {
+        console.log('✅ SAWERIA detected (version + donator_name)');
+        return parseSaweria(data);
+    }
+    if (data.donator_name || data.donatur_name) {
+        console.log('✅ SAWERIA detected (donator_name)');
+        return parseSaweria(data);
     }
     
-    if (data.supporter_name && data.price) return parseTrakteer(data);
-    if (data.supporter && data.amount) return parseSociabuzz(data);
-    if (data.supporter_name) return parseTrakteer(data);
-    if (data.name && data.amount) return parseSociabuzz(data);
+    // ⚠️ Deteksi Sociabuzz - HANYA jika tidak ada field BagiBagi
+    if (data.supporter && (data.email_supporter || data.currency === 'IDR')) {
+        console.log('✅ SOCIABUZZ detected (supporter + email/currency)');
+        return parseSociabuzz(data);
+    }
+    if (data.content?.link?.includes('sociabuzz.com')) {
+        console.log('✅ SOCIABUZZ detected (content link)');
+        return parseSociabuzz(data);
+    }
     
+    // Platform string fallback
+    if (platformLower === 'sociabuzz' || platformLower === 'buzz') {
+        console.log('✅ SOCIABUZZ detected from platform field');
+        return parseSociabuzz(data);
+    }
+    if (platformLower === 'saweria') {
+        console.log('✅ SAWERIA detected from platform field');
+        return parseSaweria(data);
+    }
+    if (platformLower === 'trakteer') {
+        console.log('✅ TRAKTEER detected from platform field');
+        return parseTrakteer(data);
+    }
+    if (platformLower === 'tako') {
+        console.log('✅ TAKO detected from platform field');
+        return parseTako(data);
+    }
+    
+    // URL detection
+    if (data.url) {
+        if (data.url.includes('sociabuzz')) {
+            console.log('✅ SOCIABUZZ detected from URL');
+            return parseSociabuzz(data);
+        }
+        if (data.url.includes('trakteer')) {
+            console.log('✅ TRAKTEER detected from URL');
+            return parseTrakteer(data);
+        }
+        if (data.url.includes('saweria')) {
+            console.log('✅ SAWERIA detected from URL');
+            return parseSaweria(data);
+        }
+    }
+    
+    // Generic field detection
+    if (data.supporter_name && data.price) {
+        console.log('✅ TRAKTEER detected (supporter_name + price)');
+        return parseTrakteer(data);
+    }
+    if (data.supporter && data.amount) {
+        console.log('✅ SOCIABUZZ detected (supporter + amount)');
+        return parseSociabuzz(data);
+    }
+    if (data.supporter_name) {
+        console.log('✅ TRAKTEER detected (supporter_name)');
+        return parseTrakteer(data);
+    }
+    if (data.name && data.amount) {
+        console.log('⚠️ Generic detection - defaulting to SOCIABUZZ');
+        return parseSociabuzz(data);
+    }
+    
+    console.log('❌ No platform detected');
+    console.log('==========================================');
     return null;
 }
 
@@ -356,16 +433,27 @@ app.post('/donation/:key/webhook',
         const userKey = req.params.key;
         const config = req.userConfig;
         
+        console.log(`\n📥 Webhook received for user: ${userKey}`);
+        
         const donation = autoDetectPlatform(req.body);
         
         if (!donation) {
+            console.log('❌ Failed to parse donation data');
             return res.status(400).json({ 
                 error: 'INVALID_DONATION_DATA',
                 message: 'Could not parse donation data'
             });
         }
         
+        console.log(`✅ Parsed as ${donation.platform.toUpperCase()}:`, {
+            donor: donation.donor_name,
+            amount: donation.amount,
+            isVerified: donation.isVerified,
+            isAnonymous: donation.isAnonymous
+        });
+        
         if (!donation.amount || donation.amount <= 0) {
+            console.log('❌ Invalid amount');
             return res.status(400).json({ 
                 error: 'INVALID_AMOUNT',
                 message: 'Amount must be greater than 0'
@@ -373,6 +461,7 @@ app.post('/donation/:key/webhook',
         }
         
         if (isDuplicate(userKey, donation)) {
+            console.log('⚠️ Duplicate donation ignored');
             return res.status(200).json({ 
                 success: true, 
                 message: 'Duplicate ignored',
@@ -386,12 +475,14 @@ app.post('/donation/:key/webhook',
             const result = addToQueue(userKey, donation, config.maxQueueSize);
             
             if (!result.success) {
+                console.log('❌ Queue is full');
                 return res.status(429).json({ 
                     error: 'QUEUE_FULL',
                     message: 'Donation queue is full'
                 });
             }
             
+            console.log(`📋 Added to queue (position: ${result.queueSize})`);
             markAsProcessed(userKey, donation);
             return res.status(200).json({ 
                 success: true, 
@@ -404,6 +495,7 @@ app.post('/donation/:key/webhook',
         store.timestamps.set(userKey, Date.now());
         markAsProcessed(userKey, donation);
         
+        console.log('✅ Donation stored successfully');
         res.status(200).json({ success: true, queued: false });
     }
 );
@@ -728,6 +820,7 @@ setInterval(() => {
 }, 10000);
 
 app.use((err, req, res, next) => {
+    console.error('❌ Server error:', err);
     res.status(500).json({ 
         error: 'INTERNAL_SERVER_ERROR',
         message: 'An unexpected error occurred'
@@ -742,5 +835,7 @@ app.use((req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`📝 Webhook endpoint: /donation/:key/webhook`);
+    console.log(`🔍 Health check: /health`);
 });
