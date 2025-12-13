@@ -263,10 +263,9 @@ function sanitizeAmount(amount) {
 function parseBagiBagi(data) {
     console.log('📦 Parsing BagiBagi data:', JSON.stringify(data, null, 2));
     
-    // ✅ KEEP ALL ORIGINAL FIELDS - Roblox yang handle!
     return {
         platform: 'bagibagi',
-        userName: sanitizeString(data.userName || data.user_name || 'Anonymous'),
+        userName: sanitizeString(data.userName || 'Anonymous'), // ✅ HANYA userName!
         amount: sanitizeAmount(data.amount),
         message: sanitizeString(data.message || '', 500),
         isVerified: data.isVerified === true,
@@ -278,8 +277,12 @@ function parseSaweria(data) {
     console.log('💰 Parsing Saweria data');
     return {
         platform: 'saweria',
-        donor_name: sanitizeString(data.donator_name || data.donatur_name || 'Anonymous'),
-        amount: sanitizeAmount(data.amount_raw || data.amount || data.etc?.amount_to_display),
+        donor_name: sanitizeString(
+            data.donator_name || 
+            data.donatur_name || 
+            'Anonymous'
+        ), // ✅ HANYA donator/donatur_name!
+        amount: sanitizeAmount(data.amount_raw || data.amount),
         message: sanitizeString(data.message || data.donator_message || data.donatur_message || '', 500)
     };
 }
@@ -288,7 +291,7 @@ function parseSociabuzz(data) {
     console.log('🐝 Parsing Sociabuzz data');
     return {
         platform: 'sociabuzz',
-        supporter: sanitizeString(data.supporter || data.supporter_name || data.name || 'Anonymous'),
+        supporter: sanitizeString(data.supporter || 'Anonymous'), // ✅ HANYA supporter!
         amount: sanitizeAmount(data.amount || data.amount_settled || data.amount_raw),
         message: sanitizeString(data.message || data.supporter_message || data.note || '', 500)
     };
@@ -298,9 +301,9 @@ function parseTrakteer(data) {
     console.log('☕ Parsing Trakteer data');
     return {
         platform: 'trakteer',
-        supporter_name: sanitizeString(data.supporter_name || data.name || 'Anonymous'),
-        amount: sanitizeAmount(data.amount || data.price),
-        message: sanitizeString(data.supporter_message || data.message || data.note || '', 500)
+        supporter_name: sanitizeString(data.supporter_name || 'Anonymous'), // ✅ HANYA supporter_name!
+        amount: sanitizeAmount(data.price || data.amount),
+        message: sanitizeString(data.supporter_message || data.message || '', 500)
     };
 }
 
@@ -308,9 +311,9 @@ function parseTako(data) {
     console.log('🐙 Parsing Tako data');
     return {
         platform: 'tako',
-        supporter_name: sanitizeString(data.supporter_name || data.donator_name || data.name || 'Anonymous'),
-        amount: sanitizeAmount(data.amount || data.amount_raw),
-        message: sanitizeString(data.message || data.supporter_message || data.note || '', 500)
+        supporter_name: sanitizeString(data.supporter_name || data.donator_name || 'Anonymous'),
+        amount: sanitizeAmount(data.amount_raw || data.amount),
+        message: sanitizeString(data.message || data.supporter_message || '', 500)
     };
 }
 
