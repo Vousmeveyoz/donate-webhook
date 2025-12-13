@@ -265,7 +265,7 @@ function parseBagiBagi(data) {
     
     return {
         platform: 'bagibagi',
-        userName: sanitizeString(data.userName || 'Anonymous'), // ✅ HANYA userName!
+        userName: sanitizeString(data.userName || 'Anonymous'),
         amount: sanitizeAmount(data.amount),
         message: sanitizeString(data.message || '', 500),
         isVerified: data.isVerified === true,
@@ -322,19 +322,22 @@ function autoDetectPlatform(data) {
     console.log('========== AUTO DETECT PLATFORM ==========');
     console.log('Raw data:', JSON.stringify(data, null, 2));
     
+    // ✅ PRIORITY 1: Deteksi BagiBagi dari field eksklusif SEBELUM cek apapun
     if (data.userName !== undefined || 
         data.isVerified !== undefined || 
         data.isAnonymous !== undefined) {
-        console.log('✅ BAGIBAGI detected from EXCLUSIVE fields');
+        console.log('✅ BAGIBAGI detected from EXCLUSIVE fields (userName/isVerified/isAnonymous)');
         return parseBagiBagi(data);
     }
     
+    // ✅ PRIORITY 2: Deteksi BagiBagi dari platform field
     const platformLower = (data.platform || '').toLowerCase();
     if (platformLower === 'bagibagi' || platformLower.includes('bagi')) {
         console.log('✅ BAGIBAGI detected from platform field');
         return parseBagiBagi(data);
     }
     
+    // ✅ PRIORITY 3: Deteksi Saweria dari field spesifik
     if (data.version && (data.donator_name || data.donatur_name)) {
         console.log('✅ SAWERIA detected (version + donator_name)');
         return parseSaweria(data);
@@ -344,6 +347,7 @@ function autoDetectPlatform(data) {
         return parseSaweria(data);
     }
     
+    // ✅ PRIORITY 4: Deteksi Sociabuzz dari field spesifik
     if (data.supporter && (data.email_supporter || data.currency === 'IDR')) {
         console.log('✅ SOCIABUZZ detected (supporter + email/currency)');
         return parseSociabuzz(data);
@@ -353,6 +357,7 @@ function autoDetectPlatform(data) {
         return parseSociabuzz(data);
     }
     
+    // ✅ PRIORITY 5: Deteksi dari platform field (fallback)
     if (platformLower === 'sociabuzz' || platformLower === 'buzz') {
         console.log('✅ SOCIABUZZ detected from platform field');
         return parseSociabuzz(data);
@@ -370,24 +375,36 @@ function autoDetectPlatform(data) {
         return parseTako(data);
     }
     
+    // ✅ PRIORITY 6: Deteksi dari URL
     if (data.url) {
         if (data.url.includes('sociabuzz')) return parseSociabuzz(data);
         if (data.url.includes('trakteer')) return parseTrakteer(data);
         if (data.url.includes('saweria')) return parseSaweria(data);
+        if (data.url.includes('bagibagi')) return parseBagiBagi(data);
     }
     
+    // ✅ PRIORITY 7: Deteksi dari kombinasi field (last resort)
     if (data.supporter_name && data.price) {
         console.log('✅ TRAKTEER detected (supporter_name + price)');
         return parseTrakteer(data);
     }
-    if (data.supporter && data.amount && !data.userName && data.isVerified === undefined) {
-        console.log('✅ SOCIABUZZ detected (supporter + amount)');
+    
+    // ⚠️ CRITICAL: JANGAN langsung assume Sociabuzz jika ada supporter + amount
+    // Harus pastikan BUKAN BagiBagi dulu
+    if (data.supporter && data.amount && 
+        data.userName === undefined && 
+        data.isVerified === undefined && 
+        data.isAnonymous === undefined) {
+        console.log('✅ SOCIABUZZ detected (supporter + amount, confirmed NOT BagiBagi)');
         return parseSociabuzz(data);
     }
+    
     if (data.supporter_name) {
         console.log('✅ TRAKTEER detected (supporter_name)');
         return parseTrakteer(data);
     }
+    
+    // ⚠️ Generic fallback (hindari ini sebisa mungkin)
     if (data.name && data.amount) {
         console.log('⚠️ Generic detection - defaulting to SAWERIA');
         return parseSaweria(data);
