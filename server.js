@@ -263,10 +263,10 @@ function sanitizeAmount(amount) {
 function parseBagiBagi(data) {
     console.log('📦 Parsing BagiBagi data:', JSON.stringify(data, null, 2));
     
-    // ✅ KEEP ORIGINAL FIELDS - jangan convert ke donor_name!
+    // ✅ KEEP ALL ORIGINAL FIELDS - Roblox yang handle!
     return {
         platform: 'bagibagi',
-        userName: sanitizeString(data.userName || data.user_name || 'Anonymous'), // ✅ Keep userName
+        userName: sanitizeString(data.userName || data.user_name || 'Anonymous'),
         amount: sanitizeAmount(data.amount),
         message: sanitizeString(data.message || '', 500),
         isVerified: data.isVerified === true,
@@ -288,7 +288,7 @@ function parseSociabuzz(data) {
     console.log('🐝 Parsing Sociabuzz data');
     return {
         platform: 'sociabuzz',
-        donor_name: sanitizeString(data.supporter || data.supporter_name || data.name || 'Anonymous'),
+        supporter: sanitizeString(data.supporter || data.supporter_name || data.name || 'Anonymous'),
         amount: sanitizeAmount(data.amount || data.amount_settled || data.amount_raw),
         message: sanitizeString(data.message || data.supporter_message || data.note || '', 500)
     };
@@ -298,7 +298,7 @@ function parseTrakteer(data) {
     console.log('☕ Parsing Trakteer data');
     return {
         platform: 'trakteer',
-        donor_name: sanitizeString(data.supporter_name || data.name || 'Anonymous'),
+        supporter_name: sanitizeString(data.supporter_name || data.name || 'Anonymous'),
         amount: sanitizeAmount(data.amount || data.price),
         message: sanitizeString(data.supporter_message || data.message || data.note || '', 500)
     };
@@ -308,7 +308,7 @@ function parseTako(data) {
     console.log('🐙 Parsing Tako data');
     return {
         platform: 'tako',
-        donor_name: sanitizeString(data.supporter_name || data.donator_name || data.name || 'Anonymous'),
+        supporter_name: sanitizeString(data.supporter_name || data.donator_name || data.name || 'Anonymous'),
         amount: sanitizeAmount(data.amount || data.amount_raw),
         message: sanitizeString(data.message || data.supporter_message || data.note || '', 500)
     };
