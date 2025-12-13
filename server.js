@@ -295,7 +295,7 @@ function parseSaweria(data) {
         platform: 'saweria',
         donor_name: sanitizeString(data.donator_name || data.donatur_name || 'Anonymous'),
         amount: sanitizeAmount(data.amount_raw || data.amount || data.etc?.amount_to_display),
-        message: sanitizeString(data.message || data.donator_message || '', 500)
+        message: sanitizeString(data.message || data.donator_message || data.donatur_message || '', 500)
     };
 }
 
@@ -305,7 +305,7 @@ function parseSociabuzz(data) {
         platform: 'sociabuzz',
         donor_name: sanitizeString(data.supporter || data.supporter_name || data.name || 'Anonymous'),
         amount: sanitizeAmount(data.amount || data.amount_settled || data.amount_raw),
-        message: sanitizeString(data.message || data.supporter_message || '', 500)
+        message: sanitizeString(data.message || data.supporter_message || data.note || '', 500)
     };
 }
 
@@ -315,7 +315,7 @@ function parseTrakteer(data) {
         platform: 'trakteer',
         donor_name: sanitizeString(data.supporter_name || data.name || 'Anonymous'),
         amount: sanitizeAmount(data.amount || data.price),
-        message: sanitizeString(data.supporter_message || data.message || '', 500)
+        message: sanitizeString(data.supporter_message || data.message || data.note || '', 500)
     };
 }
 
@@ -325,7 +325,7 @@ function parseTako(data) {
         platform: 'tako',
         donor_name: sanitizeString(data.supporter_name || data.donator_name || data.name || 'Anonymous'),
         amount: sanitizeAmount(data.amount || data.amount_raw),
-        message: sanitizeString(data.message || data.supporter_message || '', 500)
+        message: sanitizeString(data.message || data.supporter_message || data.note || '', 500)
     };
 }
 
@@ -335,11 +335,11 @@ function autoDetectPlatform(data) {
     console.log('Raw data:', JSON.stringify(data, null, 2));
     
     // ✅ PRIORITAS TERTINGGI: Deteksi BagiBagi dari field khusus
-    // Cek field userName, isVerified, atau isAnonymous (field eksklusif BagiBagi)
+    // Field userName, isVerified, atau isAnonymous EKSKLUSIF untuk BagiBagi
     if (data.userName || 
         data.isVerified !== undefined || 
         data.isAnonymous !== undefined) {
-        console.log('✅ BAGIBAGI detected from fields (userName/isVerified/isAnonymous)');
+        console.log('✅ BAGIBAGI detected from exclusive fields (userName/isVerified/isAnonymous)');
         return parseBagiBagi(data);
     }
     
@@ -350,7 +350,7 @@ function autoDetectPlatform(data) {
         return parseBagiBagi(data);
     }
     
-    // Deteksi Saweria
+    // Deteksi Saweria - donatur_name/donator_name
     if (data.version && (data.donator_name || data.donatur_name)) {
         console.log('✅ SAWERIA detected (version + donator_name)');
         return parseSaweria(data);
@@ -360,7 +360,7 @@ function autoDetectPlatform(data) {
         return parseSaweria(data);
     }
     
-    // ⚠️ Deteksi Sociabuzz - HANYA jika tidak ada field BagiBagi
+    // ⚠️ Deteksi Sociabuzz - supporter field (TANPA field BagiBagi)
     if (data.supporter && (data.email_supporter || data.currency === 'IDR')) {
         console.log('✅ SOCIABUZZ detected (supporter + email/currency)');
         return parseSociabuzz(data);
@@ -370,7 +370,7 @@ function autoDetectPlatform(data) {
         return parseSociabuzz(data);
     }
     
-    // Platform string fallback
+    // Platform string fallback - SociaBuzz (hanya jika TIDAK ada field BagiBagi)
     if (platformLower === 'sociabuzz' || platformLower === 'buzz') {
         console.log('✅ SOCIABUZZ detected from platform field');
         return parseSociabuzz(data);
@@ -409,8 +409,9 @@ function autoDetectPlatform(data) {
         console.log('✅ TRAKTEER detected (supporter_name + price)');
         return parseTrakteer(data);
     }
-    if (data.supporter && data.amount) {
-        console.log('✅ SOCIABUZZ detected (supporter + amount)');
+    // SociaBuzz: supporter field TANPA field BagiBagi
+    if (data.supporter && data.amount && !data.userName && data.isVerified === undefined) {
+        console.log('✅ SOCIABUZZ detected (supporter + amount, no BagiBagi fields)');
         return parseSociabuzz(data);
     }
     if (data.supporter_name) {
