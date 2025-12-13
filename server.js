@@ -260,27 +260,15 @@ function sanitizeAmount(amount) {
     return isNaN(num) || num < 0 ? 0 : Math.min(num, 1000000000);
 }
 
-// ✅ FIXED: Parse BagiBagi dengan field handling yang benar
 function parseBagiBagi(data) {
     console.log('📦 Parsing BagiBagi data:', JSON.stringify(data, null, 2));
     
+    // ✅ KEEP ORIGINAL FIELDS - jangan convert ke donor_name!
     return {
         platform: 'bagibagi',
-        donor_name: sanitizeString(
-            data.userName || 
-            data.user_name || 
-            data.name || 
-            'Anonymous'
-        ),
+        userName: sanitizeString(data.userName || data.user_name || 'Anonymous'), // ✅ Keep userName
         amount: sanitizeAmount(data.amount),
         message: sanitizeString(data.message || '', 500),
-        transaction_id: sanitizeString(
-            data.transaction_id || 
-            data.trx_id || 
-            data.id || 
-            'unknown', 
-            100
-        ),
         isVerified: data.isVerified === true,
         isAnonymous: data.isAnonymous === true
     };
@@ -331,26 +319,19 @@ function autoDetectPlatform(data) {
     console.log('========== AUTO DETECT PLATFORM ==========');
     console.log('Raw data:', JSON.stringify(data, null, 2));
     
-    // ✅ PRIORITAS 1: Deteksi BagiBagi dari field EKSKLUSIF
-    // Field userName, isVerified, atau isAnonymous HANYA ada di BagiBagi
     if (data.userName !== undefined || 
         data.isVerified !== undefined || 
         data.isAnonymous !== undefined) {
         console.log('✅ BAGIBAGI detected from EXCLUSIVE fields');
-        console.log('   - userName:', data.userName);
-        console.log('   - isVerified:', data.isVerified);
-        console.log('   - isAnonymous:', data.isAnonymous);
         return parseBagiBagi(data);
     }
     
-    // ✅ PRIORITAS 2: Cek explicit platform = "bagibagi"
     const platformLower = (data.platform || '').toLowerCase();
     if (platformLower === 'bagibagi' || platformLower.includes('bagi')) {
         console.log('✅ BAGIBAGI detected from platform field');
         return parseBagiBagi(data);
     }
     
-    // Deteksi Saweria
     if (data.version && (data.donator_name || data.donatur_name)) {
         console.log('✅ SAWERIA detected (version + donator_name)');
         return parseSaweria(data);
@@ -360,7 +341,6 @@ function autoDetectPlatform(data) {
         return parseSaweria(data);
     }
     
-    // Deteksi Sociabuzz
     if (data.supporter && (data.email_supporter || data.currency === 'IDR')) {
         console.log('✅ SOCIABUZZ detected (supporter + email/currency)');
         return parseSociabuzz(data);
@@ -370,7 +350,6 @@ function autoDetectPlatform(data) {
         return parseSociabuzz(data);
     }
     
-    // Platform string fallback
     if (platformLower === 'sociabuzz' || platformLower === 'buzz') {
         console.log('✅ SOCIABUZZ detected from platform field');
         return parseSociabuzz(data);
@@ -388,23 +367,12 @@ function autoDetectPlatform(data) {
         return parseTako(data);
     }
     
-    // URL detection
     if (data.url) {
-        if (data.url.includes('sociabuzz')) {
-            console.log('✅ SOCIABUZZ detected from URL');
-            return parseSociabuzz(data);
-        }
-        if (data.url.includes('trakteer')) {
-            console.log('✅ TRAKTEER detected from URL');
-            return parseTrakteer(data);
-        }
-        if (data.url.includes('saweria')) {
-            console.log('✅ SAWERIA detected from URL');
-            return parseSaweria(data);
-        }
+        if (data.url.includes('sociabuzz')) return parseSociabuzz(data);
+        if (data.url.includes('trakteer')) return parseTrakteer(data);
+        if (data.url.includes('saweria')) return parseSaweria(data);
     }
     
-    // Generic field detection
     if (data.supporter_name && data.price) {
         console.log('✅ TRAKTEER detected (supporter_name + price)');
         return parseTrakteer(data);
@@ -423,7 +391,6 @@ function autoDetectPlatform(data) {
     }
     
     console.log('❌ No platform detected');
-    console.log('==========================================');
     return null;
 }
 
