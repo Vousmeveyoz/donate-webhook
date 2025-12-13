@@ -288,12 +288,11 @@ function parseSaweria(data) {
 }
 
 function parseSociabuzz(data) {
-    console.log('🐝 Parsing Sociabuzz data');
     return {
         platform: 'sociabuzz',
-        supporter: sanitizeString(data.supporter || 'Anonymous'), // ✅ HANYA supporter!
-        amount: sanitizeAmount(data.amount || data.amount_settled || data.amount_raw),
-        message: sanitizeString(data.message || data.supporter_message || data.note || '', 500)
+        donor_name: data.supporter || data.supporter_name || data.name || 'Anonymous',
+        amount: data.amount || data.amount_settled || data.amount_raw || 0,
+        message: data.message || data.supporter_message || ''
     };
 }
 
