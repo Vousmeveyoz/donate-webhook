@@ -453,7 +453,6 @@ app.post('/donation/:key/webhook',
         let webhookData = req.body;
         
         // ✅ HANDLE BAGIBAGI ARRAY FORMAT
-        // BagiBagi mengirim: { data: [...], success: true, message: "Success" }
         if (webhookData.data && Array.isArray(webhookData.data)) {
             if (webhookData.data.length === 0) {
                 console.log('⚠️ BagiBagi array is empty, no donation data');
@@ -465,7 +464,7 @@ app.post('/donation/:key/webhook',
             }
             
             console.log('🔄 Detected BagiBagi array format, extracting first item...');
-            webhookData = webhookData.data[0]; // Ambil donasi pertama dari array
+            webhookData = webhookData.data[0];
             console.log('Extracted data:', JSON.stringify(webhookData, null, 2));
         }
         
@@ -479,12 +478,21 @@ app.post('/donation/:key/webhook',
             });
         }
         
-        console.log(`✅ Parsed as ${donation.platform.toUpperCase()}:`, {
-            donor: donation.donor_name,
-            amount: donation.amount,
-            isVerified: donation.isVerified,
-            isAnonymous: donation.isAnonymous
-        });
+        console.log(`✅ Parsed donation:`, JSON.stringify(donation, null, 2));
+        
+        // ✅ CRITICAL: Validate that BagiBagi data has correct fields
+        if (donation.platform === 'bagibagi') {
+            console.log('🔍 BagiBagi validation:');
+            console.log('  - userName:', donation.userName);
+            console.log('  - isAnonymous:', donation.isAnonymous);
+            console.log('  - isVerified:', donation.isVerified);
+            
+            // ✅ Ensure userName exists (fallback to Anonymous if missing)
+            if (!donation.userName) {
+                donation.userName = 'Anonymous';
+                console.log('⚠️ userName was missing, set to Anonymous');
+            }
+        }
         
         if (!donation.amount || donation.amount <= 0) {
             console.log('❌ Invalid amount');
@@ -525,6 +533,9 @@ app.post('/donation/:key/webhook',
             });
         }
         
+        // ✅ FINAL LOG: Show what's being stored
+        console.log('💾 Storing donation:', JSON.stringify(donation, null, 2));
+        
         store.donations.set(userKey, donation);
         store.timestamps.set(userKey, Date.now());
         markAsProcessed(userKey, donation);
@@ -547,6 +558,9 @@ app.get('/donation/:key/data',
         let donation = store.donations.get(userKey);
         const config = req.userConfig;
         
+        console.log('📤 Sending donation to Roblox:', JSON.stringify(donation, null, 2));
+        
+        // ✅ Apply overrides if enabled
         if (config.overrides?.enabled) {
             donation = {
                 ...donation,
