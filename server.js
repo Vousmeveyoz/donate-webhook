@@ -192,10 +192,12 @@ function isDuplicate(userKey, donation) {
     
     store.processedIds.set(userKey, recentDonations);
     
+    const currentDonorName = getDonorName(donation);
+    
     return recentDonations.some(item => {
         const timeDiff = now - item.timestamp;
         return item.platform === donation.platform &&
-               item.donor_name === donation.donor_name &&
+               item.donorName === currentDonorName &&
                item.amount === donation.amount &&
                timeDiff < EXACT_DUPLICATE_WINDOW;
     });
@@ -203,9 +205,10 @@ function isDuplicate(userKey, donation) {
 
 function markAsProcessed(userKey, donation) {
     const processedList = store.processedIds.get(userKey) || [];
+    
     processedList.push({
         platform: donation.platform,
-        donor_name: donation.donor_name,
+        donorName: getDonorName(donation), // ✅ Universal field
         amount: donation.amount,
         timestamp: Date.now()
     });
@@ -263,14 +266,38 @@ function sanitizeAmount(amount) {
 function parseBagiBagi(data) {
     console.log('📦 Parsing BagiBagi data:', JSON.stringify(data, null, 2));
     
+    // ✅ Ambil userName dari BagiBagi
+    let userName = data.userName || 'Anonymous';
+    
+    // ✅ Jika isAnonymous = true, paksa jadi "Anonymous"
+    if (data.isAnonymous === true) {
+        userName = 'Anonymous';
+        console.log('🔒 Anonymous donation detected');
+    }
+    
+    console.log('🔍 Final userName:', userName);
+    
     return {
         platform: 'bagibagi',
-        userName: sanitizeString(data.userName || 'Anonymous'),
+        userName: sanitizeString(userName), // ✅ Tetap pakai userName
         amount: sanitizeAmount(data.amount),
         message: sanitizeString(data.message || '', 500),
         isVerified: data.isVerified === true,
         isAnonymous: data.isAnonymous === true
     };
+}
+
+function getDonorName(donation) {
+    // BagiBagi uses userName
+    if (donation.platform === 'bagibagi') {
+        return donation.userName || 'Anonymous';
+    }
+    // Trakteer & Tako use supporter_name
+    if (donation.platform === 'trakteer' || donation.platform === 'tako') {
+        return donation.supporter_name || 'Anonymous';
+    }
+    // Saweria & Sociabuzz use donor_name
+    return donation.donor_name || 'Anonymous';
 }
 
 function parseSaweria(data) {
