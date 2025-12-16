@@ -266,52 +266,45 @@ function sanitizeAmount(amount) {
 function parseBagiBagi(data) {
     console.log('📦 Parsing BagiBagi data:', JSON.stringify(data, null, 2));
     
-    // ✅ Ambil userName dari BagiBagi
     let userName = data.userName || 'Anonymous';
     
-    // ✅ Jika isAnonymous = true, paksa jadi "Anonymous"
     if (data.isAnonymous === true) {
         userName = 'Anonymous';
         console.log('🔒 Anonymous donation detected');
     }
     
-    console.log('🔍 Final userName:', userName);
-    
-    return {
-        platform: 'bagibagi',
-        userName: sanitizeString(userName), // ✅ Tetap pakai userName
+    const result = {
+        platform: 'bagibagi', // ✅ CRITICAL: Harus 'bagibagi'
+        userName: sanitizeString(userName),
         amount: sanitizeAmount(data.amount),
         message: sanitizeString(data.message || '', 500),
         isVerified: data.isVerified === true,
         isAnonymous: data.isAnonymous === true
     };
-}
-
-function getDonorName(donation) {
-    // BagiBagi uses userName
-    if (donation.platform === 'bagibagi') {
-        return donation.userName || 'Anonymous';
-    }
-    // Trakteer & Tako use supporter_name
-    if (donation.platform === 'trakteer' || donation.platform === 'tako') {
-        return donation.supporter_name || 'Anonymous';
-    }
-    // Saweria & Sociabuzz use donor_name
-    return donation.donor_name || 'Anonymous';
+    
+    console.log('📦 BagiBagi parsed result:', JSON.stringify(result, null, 2));
+    
+    return result;
 }
 
 function parseSaweria(data) {
-    console.log('💰 Parsing Saweria data');
-    return {
-        platform: 'saweria',
+    console.log('💰 Parsing Saweria data:', JSON.stringify(data, null, 2));
+    
+    const result = {
+        platform: 'saweria', // ✅ CRITICAL: Harus 'saweria'
         donor_name: sanitizeString(
             data.donator_name || 
             data.donatur_name || 
+            data.donor_name ||
             'Anonymous'
-        ), // ✅ HANYA donator/donatur_name!
+        ),
         amount: sanitizeAmount(data.amount_raw || data.amount),
         message: sanitizeString(data.message || data.donator_message || data.donatur_message || '', 500)
     };
+    
+    console.log('💰 Saweria parsed result:', JSON.stringify(result, null, 2));
+    
+    return result;
 }
 
 function parseSociabuzz(data) {
@@ -348,19 +341,24 @@ function autoDetectPlatform(data) {
     console.log('========== AUTO DETECT PLATFORM ==========');
     console.log('Raw data:', JSON.stringify(data, null, 2));
     
-    // ✅ PRIORITY 1: Deteksi BagiBagi dari field eksklusif SEBELUM cek apapun
+    // ✅ PRIORITY 1: Deteksi BagiBagi dari field eksklusif PERTAMA KALI
     if (data.userName !== undefined || 
         data.isVerified !== undefined || 
         data.isAnonymous !== undefined) {
-        console.log('✅ BAGIBAGI detected from EXCLUSIVE fields (userName/isVerified/isAnonymous)');
-        return parseBagiBagi(data);
+        console.log('✅ BAGIBAGI detected from EXCLUSIVE fields');
+        const result = parseBagiBagi(data);
+        console.log('✅ BagiBagi result:', JSON.stringify(result, null, 2));
+        return result;
     }
     
-    // ✅ PRIORITY 2: Deteksi BagiBagi dari platform field
+    // ✅ PRIORITY 2: Cek platform field HANYA jika bukan BagiBagi
     const platformLower = (data.platform || '').toLowerCase();
+    
     if (platformLower === 'bagibagi' || platformLower.includes('bagi')) {
         console.log('✅ BAGIBAGI detected from platform field');
-        return parseBagiBagi(data);
+        const result = parseBagiBagi(data);
+        console.log('✅ BagiBagi result:', JSON.stringify(result, null, 2));
+        return result;
     }
     
     // ✅ PRIORITY 3: Deteksi Saweria dari field spesifik
@@ -375,15 +373,11 @@ function autoDetectPlatform(data) {
     
     // ✅ PRIORITY 4: Deteksi Sociabuzz dari field spesifik
     if (data.supporter && (data.email_supporter || data.currency === 'IDR')) {
-        console.log('✅ SOCIABUZZ detected (supporter + email/currency)');
-        return parseSociabuzz(data);
-    }
-    if (data.content?.link?.includes('sociabuzz.com')) {
-        console.log('✅ SOCIABUZZ detected (content link)');
+        console.log('✅ SOCIABUZZ detected');
         return parseSociabuzz(data);
     }
     
-    // ✅ PRIORITY 5: Deteksi dari platform field (fallback)
+    // ✅ PRIORITY 5: Deteksi dari platform field
     if (platformLower === 'sociabuzz' || platformLower === 'buzz') {
         console.log('✅ SOCIABUZZ detected from platform field');
         return parseSociabuzz(data);
@@ -403,41 +397,40 @@ function autoDetectPlatform(data) {
     
     // ✅ PRIORITY 6: Deteksi dari URL
     if (data.url) {
+        if (data.url.includes('bagibagi')) {
+            console.log('✅ BAGIBAGI detected from URL');
+            return parseBagiBagi(data);
+        }
         if (data.url.includes('sociabuzz')) return parseSociabuzz(data);
         if (data.url.includes('trakteer')) return parseTrakteer(data);
         if (data.url.includes('saweria')) return parseSaweria(data);
-        if (data.url.includes('bagibagi')) return parseBagiBagi(data);
     }
     
-    // ✅ PRIORITY 7: Deteksi dari kombinasi field (last resort)
+    // ✅ PRIORITY 7: Deteksi dari kombinasi field
     if (data.supporter_name && data.price) {
         console.log('✅ TRAKTEER detected (supporter_name + price)');
         return parseTrakteer(data);
     }
     
-    // ⚠️ CRITICAL: JANGAN langsung assume Sociabuzz jika ada supporter + amount
-    // Harus pastikan BUKAN BagiBagi dulu
-    if (data.supporter && data.amount && 
-        data.userName === undefined && 
-        data.isVerified === undefined && 
-        data.isAnonymous === undefined) {
-        console.log('✅ SOCIABUZZ detected (supporter + amount, confirmed NOT BagiBagi)');
+    // ⚠️ Fallback terakhir
+    console.log('⚠️ No specific platform detected, using generic detection');
+    
+    // Cek semua field yang mungkin
+    if (data.userName) {
+        console.log('⚠️ Found userName - probably BagiBagi');
+        return parseBagiBagi(data);
+    }
+    if (data.supporter_name) {
+        console.log('⚠️ Found supporter_name - probably Trakteer');
+        return parseTrakteer(data);
+    }
+    if (data.supporter) {
+        console.log('⚠️ Found supporter - probably Sociabuzz');
         return parseSociabuzz(data);
     }
     
-    if (data.supporter_name) {
-        console.log('✅ TRAKTEER detected (supporter_name)');
-        return parseTrakteer(data);
-    }
-    
-    // ⚠️ Generic fallback (hindari ini sebisa mungkin)
-    if (data.name && data.amount) {
-        console.log('⚠️ Generic detection - defaulting to SAWERIA');
-        return parseSaweria(data);
-    }
-    
-    console.log('❌ No platform detected');
-    return null;
+    console.log('❌ No platform detected - defaulting to Saweria');
+    return parseSaweria(data);
 }
 
 // ✅ WEBHOOK HANDLER dengan support BagiBagi array format
@@ -447,15 +440,19 @@ app.post('/donation/:key/webhook',
         const userKey = req.params.key;
         const config = req.userConfig;
         
-        console.log(`\n📥 Webhook received for user: ${userKey}`);
-        console.log('Raw body:', JSON.stringify(req.body, null, 2));
+        console.log(`\n${'='.repeat(70)}`);
+        console.log(`📥 WEBHOOK RECEIVED for user: ${userKey}`);
+        console.log(`🕐 Timestamp: ${new Date().toISOString()}`);
+        console.log(`${'='.repeat(70)}`);
+        console.log('📦 Raw body:', JSON.stringify(req.body, null, 2));
+        console.log('='.repeat(70));
         
         let webhookData = req.body;
         
         // ✅ HANDLE BAGIBAGI ARRAY FORMAT
         if (webhookData.data && Array.isArray(webhookData.data)) {
             if (webhookData.data.length === 0) {
-                console.log('⚠️ BagiBagi array is empty, no donation data');
+                console.log('⚠️ BagiBagi array is empty');
                 return res.status(200).json({ 
                     success: true, 
                     message: 'Empty data array',
@@ -463,11 +460,12 @@ app.post('/donation/:key/webhook',
                 });
             }
             
-            console.log('🔄 Detected BagiBagi array format, extracting first item...');
+            console.log('🔄 Detected BagiBagi array format');
             webhookData = webhookData.data[0];
-            console.log('Extracted data:', JSON.stringify(webhookData, null, 2));
+            console.log('📤 Extracted data:', JSON.stringify(webhookData, null, 2));
         }
         
+        // ✅ DETECT PLATFORM
         const donation = autoDetectPlatform(webhookData);
         
         if (!donation) {
@@ -478,21 +476,10 @@ app.post('/donation/:key/webhook',
             });
         }
         
-        console.log(`✅ Parsed donation:`, JSON.stringify(donation, null, 2));
-        
-        // ✅ CRITICAL: Validate that BagiBagi data has correct fields
-        if (donation.platform === 'bagibagi') {
-            console.log('🔍 BagiBagi validation:');
-            console.log('  - userName:', donation.userName);
-            console.log('  - isAnonymous:', donation.isAnonymous);
-            console.log('  - isVerified:', donation.isVerified);
-            
-            // ✅ Ensure userName exists (fallback to Anonymous if missing)
-            if (!donation.userName) {
-                donation.userName = 'Anonymous';
-                console.log('⚠️ userName was missing, set to Anonymous');
-            }
-        }
+        console.log('='.repeat(70));
+        console.log('✅ FINAL PARSED DONATION:');
+        console.log(JSON.stringify(donation, null, 2));
+        console.log('='.repeat(70));
         
         if (!donation.amount || donation.amount <= 0) {
             console.log('❌ Invalid amount');
@@ -533,17 +520,20 @@ app.post('/donation/:key/webhook',
             });
         }
         
-        // ✅ FINAL LOG: Show what's being stored
-        console.log('💾 Storing donation:', JSON.stringify(donation, null, 2));
-        
         store.donations.set(userKey, donation);
         store.timestamps.set(userKey, Date.now());
         markAsProcessed(userKey, donation);
         
         console.log('✅ Donation stored successfully');
+        console.log('='.repeat(70) + '\n');
+        
         res.status(200).json({ success: true, queued: false });
     }
 );
+
+// ===================================================================
+// GET DATA ENDPOINT - Pastikan mengirim data yang benar
+// ===================================================================
 
 app.get('/donation/:key/data', 
     validateUserKey,
@@ -558,9 +548,12 @@ app.get('/donation/:key/data',
         let donation = store.donations.get(userKey);
         const config = req.userConfig;
         
-        console.log('📤 Sending donation to Roblox:', JSON.stringify(donation, null, 2));
+        console.log('='.repeat(70));
+        console.log('📤 SENDING TO ROBLOX:');
+        console.log('User:', userKey);
+        console.log('Data:', JSON.stringify(donation, null, 2));
+        console.log('='.repeat(70));
         
-        // ✅ Apply overrides if enabled
         if (config.overrides?.enabled) {
             donation = {
                 ...donation,
