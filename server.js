@@ -172,10 +172,34 @@ const adminLimiter = rateLimit({
 function generateDonationId(donation) {
     const timestamp = Date.now();
     const random = crypto.randomBytes(8).toString('hex');
-    const name = (donation.donor_name || 'anon').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const name = (getDonorName(donation) || 'anon').toLowerCase().replace(/[^a-z0-9]/g, ''); // ✅ Gunakan fungsi universal
     const amount = donation.amount || 0;
     const platform = donation.platform || 'unknown';
     return `${platform}_${name}_${amount}_${timestamp}_${random}`;
+}
+
+function getDonorName(donation) {
+    // BagiBagi uses 'userName'
+    if (donation.userName !== undefined) {
+        return donation.userName;
+    }
+    
+    // Saweria uses 'donor_name'
+    if (donation.donor_name !== undefined) {
+        return donation.donor_name;
+    }
+    
+    // Trakteer/Tako uses 'supporter_name'
+    if (donation.supporter_name !== undefined) {
+        return donation.supporter_name;
+    }
+    
+    // Sociabuzz uses 'supporter'
+    if (donation.supporter !== undefined) {
+        return donation.supporter;
+    }
+    
+    return 'Anonymous';
 }
 
 const DUPLICATE_WINDOW = 5000;
@@ -192,7 +216,7 @@ function isDuplicate(userKey, donation) {
     
     store.processedIds.set(userKey, recentDonations);
     
-    const currentDonorName = getDonorName(donation);
+    const currentDonorName = getDonorName(donation); // ✅ Gunakan fungsi universal
     
     return recentDonations.some(item => {
         const timeDiff = now - item.timestamp;
@@ -208,7 +232,7 @@ function markAsProcessed(userKey, donation) {
     
     processedList.push({
         platform: donation.platform,
-        donorName: getDonorName(donation), // ✅ Universal field
+        donorName: getDonorName(donation), // ✅ Gunakan fungsi universal
         amount: donation.amount,
         timestamp: Date.now()
     });
@@ -268,14 +292,15 @@ function parseBagiBagi(data) {
     
     let userName = data.userName || 'Anonymous';
     
+    // Handle anonymous donations
     if (data.isAnonymous === true) {
         userName = 'Anonymous';
         console.log('🔒 Anonymous donation detected');
     }
     
     const result = {
-        platform: 'bagibagi', // ✅ CRITICAL: Harus 'bagibagi'
-        userName: sanitizeString(userName),
+        platform: 'bagibagi',
+        userName: sanitizeString(userName),        // ✅ GUNAKAN userName, BUKAN donor_name
         amount: sanitizeAmount(data.amount),
         message: sanitizeString(data.message || '', 500),
         isVerified: data.isVerified === true,
@@ -341,17 +366,18 @@ function autoDetectPlatform(data) {
     console.log('========== AUTO DETECT PLATFORM ==========');
     console.log('Raw data:', JSON.stringify(data, null, 2));
     
-    // ✅ PRIORITY 1: Deteksi BagiBagi dari field eksklusif PERTAMA KALI
+    // ✅ PRIORITY 1: Deteksi BagiBagi PERTAMA dari field eksklusif
+    // BagiBagi punya field unik: userName, isVerified, isAnonymous
     if (data.userName !== undefined || 
         data.isVerified !== undefined || 
         data.isAnonymous !== undefined) {
-        console.log('✅ BAGIBAGI detected from EXCLUSIVE fields');
+        console.log('✅ BAGIBAGI detected from EXCLUSIVE fields (userName/isVerified/isAnonymous)');
         const result = parseBagiBagi(data);
         console.log('✅ BagiBagi result:', JSON.stringify(result, null, 2));
         return result;
     }
     
-    // ✅ PRIORITY 2: Cek platform field HANYA jika bukan BagiBagi
+    // ✅ PRIORITY 2: Cek platform field untuk BagiBagi
     const platformLower = (data.platform || '').toLowerCase();
     
     if (platformLower === 'bagibagi' || platformLower.includes('bagi')) {
@@ -362,12 +388,14 @@ function autoDetectPlatform(data) {
     }
     
     // ✅ PRIORITY 3: Deteksi Saweria dari field spesifik
+    // Saweria punya field: donator_name/donatur_name, version, amount_raw
     if (data.version && (data.donator_name || data.donatur_name)) {
         console.log('✅ SAWERIA detected (version + donator_name)');
         return parseSaweria(data);
     }
+    
     if (data.donator_name || data.donatur_name) {
-        console.log('✅ SAWERIA detected (donator_name)');
+        console.log('✅ SAWERIA detected (donator_name/donatur_name field)');
         return parseSaweria(data);
     }
     
@@ -377,7 +405,7 @@ function autoDetectPlatform(data) {
         return parseSociabuzz(data);
     }
     
-    // ✅ PRIORITY 5: Deteksi dari platform field
+    // ✅ PRIORITY 5: Deteksi dari platform field untuk platform lain
     if (platformLower === 'sociabuzz' || platformLower === 'buzz') {
         console.log('✅ SOCIABUZZ detected from platform field');
         return parseSociabuzz(data);
@@ -406,29 +434,35 @@ function autoDetectPlatform(data) {
         if (data.url.includes('saweria')) return parseSaweria(data);
     }
     
-    // ✅ PRIORITY 7: Deteksi dari kombinasi field
+    // ✅ PRIORITY 7: Deteksi dari kombinasi field sebagai FALLBACK TERAKHIR
+    // Hati-hati: supporter_name bisa jadi Trakteer atau Tako
     if (data.supporter_name && data.price) {
         console.log('✅ TRAKTEER detected (supporter_name + price)');
         return parseTrakteer(data);
     }
     
-    // ⚠️ Fallback terakhir
-    console.log('⚠️ No specific platform detected, using generic detection');
+    // ⚠️ Fallback detection dengan prioritas field
+    console.log('⚠️ No specific platform detected, using field-based fallback');
     
-    // Cek semua field yang mungkin
-    if (data.userName) {
+    // Cek field BagiBagi dulu
+    if (data.userName !== undefined) {
         console.log('⚠️ Found userName - probably BagiBagi');
         return parseBagiBagi(data);
     }
+    
+    // Lalu Trakteer/Tako
     if (data.supporter_name) {
         console.log('⚠️ Found supporter_name - probably Trakteer');
         return parseTrakteer(data);
     }
+    
+    // Lalu Sociabuzz
     if (data.supporter) {
         console.log('⚠️ Found supporter - probably Sociabuzz');
         return parseSociabuzz(data);
     }
     
+    // Default terakhir: Saweria (karena paling umum)
     console.log('❌ No platform detected - defaulting to Saweria');
     return parseSaweria(data);
 }
