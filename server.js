@@ -264,47 +264,33 @@ function sanitizeAmount(amount) {
     return isNaN(num) || num < 0 ? 0 : Math.min(num, 1000000000);
 }
 
-// ✅ FIXED: Parsing BagiBagi dengan logika yang benar
 function parseBagiBagi(data) {
     console.log('📦 Parsing BagiBagi data:', JSON.stringify(data, null, 2));
     
-    // ✅ Ambil userName dari data
     let userName = data.userName || 'Anonymous';
-    
-    // ✅ Jika isAnonymous = true, paksa jadi "Anonymous"
-    // Ini sesuai dokumentasi: "jika value nya true maka orang tersebut melakukan donasi tanpa login ke akun"
     const isAnonymous = data.isAnonymous === true;
+    
     if (isAnonymous) {
         userName = 'Anonymous';
-        console.log('🔒 Anonymous donation (no login) - forcing name to Anonymous');
+        console.log('🔒 Anonymous donation detected');
     }
     
-    console.log('✅ Final BagiBagi userName:', userName);
+    console.log('✅ Final userName:', userName);
     
     return {
         platform: 'bagibagi',
-        donor_name: sanitizeString(userName), // ✅ FIXED: Gunakan donor_name sebagai field universal
+        donor_name: sanitizeString(userName),
         amount: sanitizeAmount(data.amount),
         message: sanitizeString(data.message || '', 500),
         isVerified: data.isVerified === true,
-        isAnonymous: isAnonymous,
-        // Simpan userName original untuk referensi internal
-        _originalUserName: data.userName
+        isAnonymous: isAnonymous
     };
 }
 
-// ✅ FIXED: getDonorName() yang menangani semua platform dengan benar
 function getDonorName(donation) {
-    // ✅ Semua platform sekarang menggunakan donor_name sebagai field universal
-    // BagiBagi sudah dikonversi ke donor_name di parseBagiBagi()
-    // Saweria, Sociabuzz sudah menggunakan donor_name
-    // Trakteer & Tako menggunakan supporter_name
-    
     if (donation.platform === 'trakteer' || donation.platform === 'tako') {
         return donation.supporter_name || 'Anonymous';
     }
-    
-    // Untuk BagiBagi, Saweria, Sociabuzz
     return donation.donor_name || 'Anonymous';
 }
 
@@ -312,11 +298,7 @@ function parseSaweria(data) {
     console.log('💰 Parsing Saweria data');
     return {
         platform: 'saweria',
-        donor_name: sanitizeString(
-            data.donator_name || 
-            data.donatur_name || 
-            'Anonymous'
-        ),
+        donor_name: sanitizeString(data.donator_name || data.donatur_name || 'Anonymous'),
         amount: sanitizeAmount(data.amount_raw || data.amount),
         message: sanitizeString(data.message || data.donator_message || data.donatur_message || '', 500)
     };
@@ -351,28 +333,21 @@ function parseTako(data) {
     };
 }
 
-// ✅ FIXED: Auto-detect dengan prioritas yang benar untuk BagiBagi
 function autoDetectPlatform(data) {
     console.log('========== AUTO DETECT PLATFORM ==========');
     console.log('Raw data:', JSON.stringify(data, null, 2));
     
-    // ✅ PRIORITY 1: Deteksi BagiBagi dari field eksklusif SEBELUM cek apapun
-    // BagiBagi memiliki field unik: userName, isVerified, isAnonymous
-    if (data.userName !== undefined || 
-        data.isVerified !== undefined || 
-        data.isAnonymous !== undefined) {
-        console.log('✅ BAGIBAGI detected from EXCLUSIVE fields (userName/isVerified/isAnonymous)');
+    if (data.userName !== undefined || data.isVerified !== undefined || data.isAnonymous !== undefined) {
+        console.log('✅ BAGIBAGI detected from EXCLUSIVE fields');
         return parseBagiBagi(data);
     }
     
-    // ✅ PRIORITY 2: Deteksi BagiBagi dari platform field
     const platformLower = (data.platform || '').toLowerCase();
     if (platformLower === 'bagibagi' || platformLower.includes('bagi')) {
         console.log('✅ BAGIBAGI detected from platform field');
         return parseBagiBagi(data);
     }
     
-    // ✅ PRIORITY 3: Deteksi Saweria dari field spesifik
     if (data.version && (data.donator_name || data.donatur_name)) {
         console.log('✅ SAWERIA detected (version + donator_name)');
         return parseSaweria(data);
@@ -382,7 +357,6 @@ function autoDetectPlatform(data) {
         return parseSaweria(data);
     }
     
-    // ✅ PRIORITY 4: Deteksi Sociabuzz dari field spesifik
     if (data.supporter && (data.email_supporter || data.currency === 'IDR')) {
         console.log('✅ SOCIABUZZ detected (supporter + email/currency)');
         return parseSociabuzz(data);
@@ -392,7 +366,6 @@ function autoDetectPlatform(data) {
         return parseSociabuzz(data);
     }
     
-    // ✅ PRIORITY 5: Deteksi dari platform field (fallback)
     if (platformLower === 'sociabuzz' || platformLower === 'buzz') {
         console.log('✅ SOCIABUZZ detected from platform field');
         return parseSociabuzz(data);
@@ -410,7 +383,6 @@ function autoDetectPlatform(data) {
         return parseTako(data);
     }
     
-    // ✅ PRIORITY 6: Deteksi dari URL
     if (data.url) {
         if (data.url.includes('sociabuzz')) return parseSociabuzz(data);
         if (data.url.includes('trakteer')) return parseTrakteer(data);
@@ -418,18 +390,13 @@ function autoDetectPlatform(data) {
         if (data.url.includes('bagibagi')) return parseBagiBagi(data);
     }
     
-    // ✅ PRIORITY 7: Deteksi dari kombinasi field (last resort)
     if (data.supporter_name && data.price) {
         console.log('✅ TRAKTEER detected (supporter_name + price)');
         return parseTrakteer(data);
     }
     
-    // ⚠️ CRITICAL: JANGAN langsung assume Sociabuzz jika ada supporter + amount
-    if (data.supporter && data.amount && 
-        data.userName === undefined && 
-        data.isVerified === undefined && 
-        data.isAnonymous === undefined) {
-        console.log('✅ SOCIABUZZ detected (supporter + amount, confirmed NOT BagiBagi)');
+    if (data.supporter && data.amount && data.userName === undefined && data.isVerified === undefined && data.isAnonymous === undefined) {
+        console.log('✅ SOCIABUZZ detected (supporter + amount)');
         return parseSociabuzz(data);
     }
     
@@ -438,7 +405,6 @@ function autoDetectPlatform(data) {
         return parseTrakteer(data);
     }
     
-    // ⚠️ Generic fallback
     if (data.name && data.amount) {
         console.log('⚠️ Generic detection - defaulting to SAWERIA');
         return parseSaweria(data);
@@ -448,394 +414,241 @@ function autoDetectPlatform(data) {
     return null;
 }
 
-// ✅ WEBHOOK HANDLER dengan support BagiBagi array format
-app.post('/donation/:key/webhook', 
-    validateUserKey,
-    (req, res) => {
-        const userKey = req.params.key;
-        const config = req.userConfig;
-        
-        console.log(`\n📥 Webhook received for user: ${userKey}`);
-        console.log('Raw body:', JSON.stringify(req.body, null, 2));
-        
-        let webhookData = req.body;
-        
-        // ✅ HANDLE BAGIBAGI ARRAY FORMAT
-        // BagiBagi mengirim: { data: [...], success: true, message: "Success" }
-        if (webhookData.data && Array.isArray(webhookData.data)) {
-            if (webhookData.data.length === 0) {
-                console.log('⚠️ BagiBagi array is empty, no donation data');
-                return res.status(200).json({ 
-                    success: true, 
-                    message: 'Empty data array',
-                    queued: false 
-                });
-            }
-            
-            console.log('🔄 Detected BagiBagi array format, extracting first item...');
-            webhookData = webhookData.data[0];
-            console.log('Extracted data:', JSON.stringify(webhookData, null, 2));
+app.post('/donation/:key/webhook', validateUserKey, (req, res) => {
+    const userKey = req.params.key;
+    const config = req.userConfig;
+    
+    console.log(`\n📥 Webhook received for user: ${userKey}`);
+    console.log('Raw body:', JSON.stringify(req.body, null, 2));
+    
+    let webhookData = req.body;
+    
+    if (webhookData.data && Array.isArray(webhookData.data)) {
+        if (webhookData.data.length === 0) {
+            console.log('⚠️ BagiBagi array is empty');
+            return res.status(200).json({ success: true, message: 'Empty data array', queued: false });
         }
-        
-        const donation = autoDetectPlatform(webhookData);
-        
-        if (!donation) {
-            console.log('❌ Failed to parse donation data');
-            return res.status(400).json({ 
-                error: 'INVALID_DONATION_DATA',
-                message: 'Could not parse donation data'
-            });
+        console.log('🔄 Detected BagiBagi array format');
+        webhookData = webhookData.data[0];
+        console.log('Extracted data:', JSON.stringify(webhookData, null, 2));
+    }
+    
+    const donation = autoDetectPlatform(webhookData);
+    
+    if (!donation) {
+        console.log('❌ Failed to parse donation data');
+        return res.status(400).json({ error: 'INVALID_DONATION_DATA', message: 'Could not parse donation data' });
+    }
+    
+    console.log(`✅ Parsed as ${donation.platform.toUpperCase()}:`, {
+        donor_name: donation.donor_name || donation.supporter_name,
+        amount: donation.amount,
+        isVerified: donation.isVerified,
+        isAnonymous: donation.isAnonymous
+    });
+    
+    if (!donation.amount || donation.amount <= 0) {
+        console.log('❌ Invalid amount');
+        return res.status(400).json({ error: 'INVALID_AMOUNT', message: 'Amount must be greater than 0' });
+    }
+    
+    if (isDuplicate(userKey, donation)) {
+        console.log('⚠️ Duplicate donation ignored');
+        return res.status(200).json({ success: true, message: 'Duplicate ignored', queued: false });
+    }
+    
+    store.updateStats(userKey, 'received');
+    
+    if (store.donations.has(userKey)) {
+        const result = addToQueue(userKey, donation, config.maxQueueSize);
+        if (!result.success) {
+            console.log('❌ Queue is full');
+            return res.status(429).json({ error: 'QUEUE_FULL', message: 'Donation queue is full' });
         }
-        
-        console.log(`✅ Parsed as ${donation.platform.toUpperCase()}:`, {
-            donor_name: donation.donor_name || donation.supporter_name,
-            amount: donation.amount,
-            isVerified: donation.isVerified,
-            isAnonymous: donation.isAnonymous
-        });
-        
-        if (!donation.amount || donation.amount <= 0) {
-            console.log('❌ Invalid amount');
-            return res.status(400).json({ 
-                error: 'INVALID_AMOUNT',
-                message: 'Amount must be greater than 0'
-            });
-        }
-        
-        if (isDuplicate(userKey, donation)) {
-            console.log('⚠️ Duplicate donation ignored');
-            return res.status(200).json({ 
-                success: true, 
-                message: 'Duplicate ignored',
-                queued: false 
-            });
-        }
-        
-        store.updateStats(userKey, 'received');
-        
-        if (store.donations.has(userKey)) {
-            const result = addToQueue(userKey, donation, config.maxQueueSize);
-            
-            if (!result.success) {
-                console.log('❌ Queue is full');
-                return res.status(429).json({ 
-                    error: 'QUEUE_FULL',
-                    message: 'Donation queue is full'
-                });
-            }
-            
-            console.log(`📋 Added to queue (position: ${result.queueSize})`);
-            markAsProcessed(userKey, donation);
-            return res.status(200).json({ 
-                success: true, 
-                queued: true,
-                queuePosition: result.queueSize
-            });
-        }
-        
-        store.donations.set(userKey, donation);
-        store.timestamps.set(userKey, Date.now());
+        console.log(`📋 Added to queue (position: ${result.queueSize})`);
         markAsProcessed(userKey, donation);
-        
-        console.log('✅ Donation stored successfully');
-        res.status(200).json({ success: true, queued: false });
+        return res.status(200).json({ success: true, queued: true, queuePosition: result.queueSize });
     }
-);
+    
+    store.donations.set(userKey, donation);
+    store.timestamps.set(userKey, Date.now());
+    markAsProcessed(userKey, donation);
+    
+    console.log('✅ Donation stored successfully');
+    res.status(200).json({ success: true, queued: false });
+});
 
-app.get('/donation/:key/data', 
-    validateUserKey,
-    requireApiKey,
-    (req, res) => {
-        const userKey = req.params.key;
-        
-        if (!store.donations.has(userKey)) {
-            return res.status(204).send();
-        }
-        
-        let donation = store.donations.get(userKey);
-        const config = req.userConfig;
-        
-        if (config.overrides?.enabled) {
-            donation = {
-                ...donation,
-                donor_name: config.overrides.donor_name,
-                message: config.overrides.message
-            };
-        }
-        
-        res.json(donation);
+app.get('/donation/:key/data', validateUserKey, requireApiKey, (req, res) => {
+    const userKey = req.params.key;
+    if (!store.donations.has(userKey)) return res.status(204).send();
+    
+    let donation = store.donations.get(userKey);
+    const config = req.userConfig;
+    
+    if (config.overrides?.enabled) {
+        donation = { ...donation, donor_name: config.overrides.donor_name, message: config.overrides.message };
     }
-);
+    res.json(donation);
+});
 
-app.delete('/donation/:key/clear', 
-    validateUserKey,
-    requireApiKey,
-    (req, res) => {
-        const userKey = req.params.key;
-        
-        if (!store.donations.has(userKey)) {
-            return res.status(404).json({ 
-                error: 'NO_DONATION',
-                message: 'No active donation to clear'
-            });
-        }
-        
+app.delete('/donation/:key/clear', validateUserKey, requireApiKey, (req, res) => {
+    const userKey = req.params.key;
+    if (!store.donations.has(userKey)) {
+        return res.status(404).json({ error: 'NO_DONATION', message: 'No active donation to clear' });
+    }
+    
+    store.donations.delete(userKey);
+    store.updateStats(userKey, 'processed');
+    const promoted = promoteFromQueue(userKey);
+    const queue = store.queues.get(userKey) || [];
+    res.json({ success: true, promoted, queueSize: queue.length });
+});
+
+app.get('/donation/:key/status', globalLimiter, validateUserKey, requireApiKey, (req, res) => {
+    const userKey = req.params.key;
+    const config = req.userConfig;
+    const queue = store.queues.get(userKey) || [];
+    const stats = store.userStats.get(userKey);
+    
+    res.json({
+        has_pending: store.donations.has(userKey),
+        donation: store.donations.get(userKey) || null,
+        queue_size: queue.length,
+        max_queue_size: config.maxQueueSize,
+        queue_usage_percent: Math.round((queue.length / config.maxQueueSize) * 100),
+        last_timestamp: store.timestamps.get(userKey) || null,
+        override_enabled: config.overrides?.enabled || false,
+        stats: stats || {}
+    });
+});
+
+app.post('/donation/:key/force-clear', globalLimiter, validateUserKey, requireApiKey, (req, res) => {
+    const userKey = req.params.key;
+    const queue = store.queues.get(userKey) || [];
+    const cleared = { donation: store.donations.has(userKey), queue: queue.length };
+    
+    if (store.donations.has(userKey)) {
         store.donations.delete(userKey);
-        store.updateStats(userKey, 'processed');
-        
-        const promoted = promoteFromQueue(userKey);
-        const queue = store.queues.get(userKey) || [];
-        
-        res.json({ 
-            success: true,
-            promoted,
-            queueSize: queue.length
-        });
+        store.timestamps.delete(userKey);
     }
-);
-
-app.get('/donation/:key/status', 
-    globalLimiter,
-    validateUserKey,
-    requireApiKey,
-    (req, res) => {
-        const userKey = req.params.key;
-        const config = req.userConfig;
-        const queue = store.queues.get(userKey) || [];
-        const stats = store.userStats.get(userKey);
-        
-        res.json({
-            has_pending: store.donations.has(userKey),
-            donation: store.donations.get(userKey) || null,
-            queue_size: queue.length,
-            max_queue_size: config.maxQueueSize,
-            queue_usage_percent: Math.round((queue.length / config.maxQueueSize) * 100),
-            last_timestamp: store.timestamps.get(userKey) || null,
-            override_enabled: config.overrides?.enabled || false,
-            stats: stats || {}
-        });
-    }
-);
-
-app.post('/donation/:key/force-clear', 
-    globalLimiter,
-    validateUserKey,
-    requireApiKey,
-    (req, res) => {
-        const userKey = req.params.key;
-        const queue = store.queues.get(userKey) || [];
-        
-        const cleared = {
-            donation: store.donations.has(userKey),
-            queue: queue.length
-        };
-        
-        if (store.donations.has(userKey)) {
-            store.donations.delete(userKey);
-            store.timestamps.delete(userKey);
-        }
-        
-        if (queue.length > 0) {
-            store.queues.set(userKey, []);
-        }
-        
-        res.json({ success: true, cleared });
-    }
-);
+    if (queue.length > 0) store.queues.set(userKey, []);
+    res.json({ success: true, cleared });
+});
 
 const MASTER_API_KEY = process.env.MASTER_API_KEY || 'cf0019eebe678e7a47c87405e41e139c1e441c0ecac0eea06b54e52c6db2fa50';
 
 function requireMasterKey(req, res, next) {
     const apiKey = req.headers['x-master-key'];
-    
     if (!apiKey || apiKey !== MASTER_API_KEY) {
-        return res.status(403).json({ 
-            error: 'FORBIDDEN',
-            message: 'Invalid master API key'
-        });
+        return res.status(403).json({ error: 'FORBIDDEN', message: 'Invalid master API key' });
     }
     next();
 }
 
-app.post('/admin/users/register',
-    adminLimiter,
-    requireMasterKey,
-    async (req, res) => {
-        try {
-            const { robloxId, discordId, discordUsername } = req.body;
-            
-            if (!robloxId || !discordId) {
-                return res.status(400).json({
-                    error: 'MISSING_FIELDS',
-                    message: 'robloxId and discordId are required'
-                });
-            }
-
-            const userKey = generateUserKey();
-            const apiKey = `sk_live_${crypto.randomBytes(24).toString('hex')}`;
-
-            const config = {
-                robloxId,
-                discordId,
-                discordUsername: discordUsername || 'Unknown',
-                apiKey,
-                maxQueueSize: 100,
-                rateLimit: {
-                    windowMs: 60000,
-                    maxRequests: 60
-                },
-                overrides: {
-                    enabled: false
-                },
-                createdAt: new Date().toISOString()
-            };
-
-            await registerUser(userKey, config);
-
-            res.json({
-                success: true,
-                userKey,
-                apiKey,
-                webhookUrl: `${req.protocol}://${req.get('host')}/donation/${userKey}/webhook`,
-                config
-            });
-
-        } catch (err) {
-            res.status(500).json({
-                error: 'REGISTRATION_FAILED',
-                message: err.message
-            });
+app.post('/admin/users/register', adminLimiter, requireMasterKey, async (req, res) => {
+    try {
+        const { robloxId, discordId, discordUsername } = req.body;
+        if (!robloxId || !discordId) {
+            return res.status(400).json({ error: 'MISSING_FIELDS', message: 'robloxId and discordId are required' });
         }
-    }
-);
 
-app.get('/admin/users/list',
-    adminLimiter,
-    requireMasterKey,
-    async (req, res) => {
-        try {
-            const users = await listAllUsers();
-            res.json({
-                success: true,
-                count: users.length,
-                users: users.map(u => ({
-                    userKey: u.userKey,
-                    robloxId: u.robloxId,
-                    discordId: u.discordId,
-                    discordUsername: u.discordUsername,
-                    createdAt: u.createdAt,
-                    maxQueueSize: u.maxQueueSize
-                }))
-            });
-        } catch (err) {
-            res.status(500).json({
-                error: 'FETCH_FAILED',
-                message: err.message
-            });
+        const userKey = generateUserKey();
+        const apiKey = `sk_live_${crypto.randomBytes(24).toString('hex')}`;
+
+        const config = {
+            robloxId, discordId,
+            discordUsername: discordUsername || 'Unknown',
+            apiKey, maxQueueSize: 100,
+            rateLimit: { windowMs: 60000, maxRequests: 60 },
+            overrides: { enabled: false },
+            createdAt: new Date().toISOString()
+        };
+
+        await registerUser(userKey, config);
+        res.json({
+            success: true, userKey, apiKey,
+            webhookUrl: `${req.protocol}://${req.get('host')}/donation/${userKey}/webhook`,
+            config
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'REGISTRATION_FAILED', message: err.message });
+    }
+});
+
+app.get('/admin/users/list', adminLimiter, requireMasterKey, async (req, res) => {
+    try {
+        const users = await listAllUsers();
+        res.json({
+            success: true, count: users.length,
+            users: users.map(u => ({
+                userKey: u.userKey, robloxId: u.robloxId, discordId: u.discordId,
+                discordUsername: u.discordUsername, createdAt: u.createdAt, maxQueueSize: u.maxQueueSize
+            }))
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'FETCH_FAILED', message: err.message });
+    }
+});
+
+app.get('/admin/users/:key', adminLimiter, requireMasterKey, async (req, res) => {
+    try {
+        const userKey = req.params.key;
+        const config = await getUserConfig(userKey);
+        if (!config) {
+            return res.status(404).json({ error: 'USER_NOT_FOUND', message: 'User key not found' });
         }
+        res.json({ success: true, userKey, config });
+    } catch (err) {
+        res.status(500).json({ error: 'FETCH_FAILED', message: err.message });
     }
-);
+});
 
-app.get('/admin/users/:key',
-    adminLimiter,
-    requireMasterKey,
-    async (req, res) => {
-        try {
-            const userKey = req.params.key;
-            const config = await getUserConfig(userKey);
-            
-            if (!config) {
-                return res.status(404).json({
-                    error: 'USER_NOT_FOUND',
-                    message: 'User key not found'
-                });
-            }
-
-            res.json({
-                success: true,
-                userKey,
-                config
-            });
-        } catch (err) {
-            res.status(500).json({
-                error: 'FETCH_FAILED',
-                message: err.message
-            });
+app.delete('/admin/users/:key', adminLimiter, requireMasterKey, async (req, res) => {
+    try {
+        const userKey = req.params.key;
+        const data = await loadUsers();
+        if (!data.users[userKey]) {
+            return res.status(404).json({ error: 'USER_NOT_FOUND', message: 'User key not found' });
         }
+
+        delete data.users[userKey];
+        await saveUsers(data);
+
+        store.donations.delete(userKey);
+        store.queues.delete(userKey);
+        store.processedIds.delete(userKey);
+        store.timestamps.delete(userKey);
+        store.userStats.delete(userKey);
+
+        res.json({ success: true, message: 'User deleted successfully' });
+    } catch (err) {
+        res.status(500).json({ error: 'DELETE_FAILED', message: err.message });
     }
-);
-
-app.delete('/admin/users/:key',
-    adminLimiter,
-    requireMasterKey,
-    async (req, res) => {
-        try {
-            const userKey = req.params.key;
-            const data = await loadUsers();
-            
-            if (!data.users[userKey]) {
-                return res.status(404).json({
-                    error: 'USER_NOT_FOUND',
-                    message: 'User key not found'
-                });
-            }
-
-            delete data.users[userKey];
-            await saveUsers(data);
-
-            store.donations.delete(userKey);
-            store.queues.delete(userKey);
-            store.processedIds.delete(userKey);
-            store.timestamps.delete(userKey);
-            store.userStats.delete(userKey);
-
-            res.json({
-                success: true,
-                message: 'User deleted successfully'
-            });
-        } catch (err) {
-            res.status(500).json({
-                error: 'DELETE_FAILED',
-                message: err.message
-            });
-        }
-    }
-);
+});
 
 app.get('/stats', globalLimiter, (req, res) => {
     let totalQueued = 0;
     const queueDetails = {};
-    
     for (const [userKey, queue] of store.queues.entries()) {
         totalQueued += queue.length;
-        if (queue.length > 0) {
-            queueDetails[userKey] = queue.length;
-        }
+        if (queue.length > 0) queueDetails[userKey] = queue.length;
     }
-    
     res.json({
-        active_donations: store.donations.size,
-        total_queued: totalQueued,
+        active_donations: store.donations.size, total_queued: totalQueued,
         users_with_queue: Object.keys(queueDetails).length,
         uptime_seconds: Math.floor(process.uptime()),
-        memory_usage: process.memoryUsage(),
-        queue_details: queueDetails
+        memory_usage: process.memoryUsage(), queue_details: queueDetails
     });
 });
 
 app.get('/health', (req, res) => {
-    res.json({ 
-        status: 'healthy',
-        timestamp: new Date().toISOString(),
-        uptime: process.uptime()
-    });
+    res.json({ status: 'healthy', timestamp: new Date().toISOString(), uptime: process.uptime() });
 });
 
 const DONATION_TIMEOUT = 60000;
 
 setInterval(() => {
     const now = Date.now();
-    
     for (const [userKey, timestamp] of store.timestamps.entries()) {
         const elapsed = now - timestamp;
         if (elapsed > DONATION_TIMEOUT && store.donations.has(userKey)) {
@@ -843,5 +656,28 @@ setInterval(() => {
             promoteFromQueue(userKey);
         }
     }
-    
-    for (const [userKey, processedList] of store.
+    for (const [userKey, processedList] of store.processedIds.entries()) {
+        const filtered = processedList.filter(item => (now - item.timestamp) < DUPLICATE_WINDOW);
+        if (filtered.length === 0) {
+            store.processedIds.delete(userKey);
+        } else {
+            store.processedIds.set(userKey, filtered);
+        }
+    }
+    if (Math.random() < 0.01) store.cleanupInactiveUsers();
+}, 10000);
+
+app.use((err, req, res, next) => {
+    console.error('❌ Server error:', err);
+    res.status(500).json({ error: 'INTERNAL_SERVER_ERROR', message: 'An unexpected error occurred' });
+});
+
+app.use((req, res) => {
+    res.status(404).json({ error: 'NOT_FOUND', message: 'Endpoint not found' });
+});
+
+app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`📝 Webhook endpoint: /donation/:key/webhook`);
+    console.log(`🔍 Health check: /health`);
+});
