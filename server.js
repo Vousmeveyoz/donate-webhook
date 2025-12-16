@@ -172,16 +172,19 @@ const adminLimiter = rateLimit({
 function generateDonationId(donation) {
     const timestamp = Date.now();
     const random = crypto.randomBytes(8).toString('hex');
-    const name = (getDonorName(donation) || 'anon').toLowerCase().replace(/[^a-z0-9]/g, ''); // ✅ Gunakan fungsi universal
+    const name = (getDonorName(donation) || 'anon').toLowerCase().replace(/[^a-z0-9]/g, '');
     const amount = donation.amount || 0;
     const platform = donation.platform || 'unknown';
     return `${platform}_${name}_${amount}_${timestamp}_${random}`;
 }
 
 function getDonorName(donation) {
-    // BagiBagi uses 'userName'
+    // BagiBagi uses 'userName' OR 'name'
     if (donation.userName !== undefined) {
         return donation.userName;
+    }
+    if (donation.name !== undefined) {
+        return donation.name;
     }
     
     // Saweria uses 'donor_name'
@@ -216,7 +219,7 @@ function isDuplicate(userKey, donation) {
     
     store.processedIds.set(userKey, recentDonations);
     
-    const currentDonorName = getDonorName(donation); // ✅ Gunakan fungsi universal
+    const currentDonorName = getDonorName(donation);
     
     return recentDonations.some(item => {
         const timeDiff = now - item.timestamp;
@@ -232,7 +235,7 @@ function markAsProcessed(userKey, donation) {
     
     processedList.push({
         platform: donation.platform,
-        donorName: getDonorName(donation), // ✅ Gunakan fungsi universal
+        donorName: getDonorName(donation),
         amount: donation.amount,
         timestamp: Date.now()
     });
@@ -290,7 +293,8 @@ function sanitizeAmount(amount) {
 function parseBagiBagi(data) {
     console.log('📦 Parsing BagiBagi data:', JSON.stringify(data, null, 2));
     
-    let userName = data.userName || 'Anonymous';
+    // BagiBagi bisa kirim 'userName' atau 'name'
+    let userName = data.userName || data.name || 'Anonymous';
     
     // Handle anonymous donations
     if (data.isAnonymous === true) {
@@ -300,7 +304,7 @@ function parseBagiBagi(data) {
     
     const result = {
         platform: 'bagibagi',
-        userName: sanitizeString(userName),        // ✅ GUNAKAN userName, BUKAN donor_name
+        userName: sanitizeString(userName),        // ✅ Field untuk BagiBagi
         amount: sanitizeAmount(data.amount),
         message: sanitizeString(data.message || '', 500),
         isVerified: data.isVerified === true,
@@ -366,7 +370,16 @@ function autoDetectPlatform(data) {
     console.log('========== AUTO DETECT PLATFORM ==========');
     console.log('Raw data:', JSON.stringify(data, null, 2));
     
-    // ✅ PRIORITY 1: Deteksi BagiBagi PERTAMA dari field eksklusif
+    // ✅ PRIORITY 1: Deteksi BagiBagi dari transaction_id
+    // BagiBagi transaction_id format: "bagibagi-uuid"
+    if (data.transaction_id && data.transaction_id.startsWith('bagibagi-')) {
+        console.log('✅ BAGIBAGI detected from transaction_id prefix');
+        const result = parseBagiBagi(data);
+        console.log('✅ BagiBagi result:', JSON.stringify(result, null, 2));
+        return result;
+    }
+    
+    // ✅ PRIORITY 2: Deteksi BagiBagi dari field eksklusif
     // BagiBagi punya field unik: userName, isVerified, isAnonymous
     if (data.userName !== undefined || 
         data.isVerified !== undefined || 
@@ -377,7 +390,7 @@ function autoDetectPlatform(data) {
         return result;
     }
     
-    // ✅ PRIORITY 2: Cek platform field untuk BagiBagi
+    // ✅ PRIORITY 3: Cek platform field untuk BagiBagi
     const platformLower = (data.platform || '').toLowerCase();
     
     if (platformLower === 'bagibagi' || platformLower.includes('bagi')) {
@@ -387,7 +400,7 @@ function autoDetectPlatform(data) {
         return result;
     }
     
-    // ✅ PRIORITY 3: Deteksi Saweria dari field spesifik
+    // ✅ PRIORITY 4: Deteksi Saweria dari field spesifik
     // Saweria punya field: donator_name/donatur_name, version, amount_raw
     if (data.version && (data.donator_name || data.donatur_name)) {
         console.log('✅ SAWERIA detected (version + donator_name)');
@@ -399,13 +412,13 @@ function autoDetectPlatform(data) {
         return parseSaweria(data);
     }
     
-    // ✅ PRIORITY 4: Deteksi Sociabuzz dari field spesifik
+    // ✅ PRIORITY 5: Deteksi Sociabuzz dari field spesifik
     if (data.supporter && (data.email_supporter || data.currency === 'IDR')) {
         console.log('✅ SOCIABUZZ detected');
         return parseSociabuzz(data);
     }
     
-    // ✅ PRIORITY 5: Deteksi dari platform field untuk platform lain
+    // ✅ PRIORITY 6: Deteksi dari platform field untuk platform lain
     if (platformLower === 'sociabuzz' || platformLower === 'buzz') {
         console.log('✅ SOCIABUZZ detected from platform field');
         return parseSociabuzz(data);
@@ -423,7 +436,7 @@ function autoDetectPlatform(data) {
         return parseTako(data);
     }
     
-    // ✅ PRIORITY 6: Deteksi dari URL
+    // ✅ PRIORITY 7: Deteksi dari URL
     if (data.url) {
         if (data.url.includes('bagibagi')) {
             console.log('✅ BAGIBAGI detected from URL');
@@ -434,7 +447,7 @@ function autoDetectPlatform(data) {
         if (data.url.includes('saweria')) return parseSaweria(data);
     }
     
-    // ✅ PRIORITY 7: Deteksi dari kombinasi field sebagai FALLBACK TERAKHIR
+    // ✅ PRIORITY 8: Deteksi dari kombinasi field sebagai FALLBACK
     // Hati-hati: supporter_name bisa jadi Trakteer atau Tako
     if (data.supporter_name && data.price) {
         console.log('✅ TRAKTEER detected (supporter_name + price)');
@@ -444,9 +457,15 @@ function autoDetectPlatform(data) {
     // ⚠️ Fallback detection dengan prioritas field
     console.log('⚠️ No specific platform detected, using field-based fallback');
     
-    // Cek field BagiBagi dulu
+    // Cek field BagiBagi dulu (userName atau name dengan mediaShareUrl)
     if (data.userName !== undefined) {
         console.log('⚠️ Found userName - probably BagiBagi');
+        return parseBagiBagi(data);
+    }
+    
+    // BagiBagi sering punya mediaShareUrl
+    if (data.name !== undefined && data.mediaShareUrl !== undefined) {
+        console.log('⚠️ Found name + mediaShareUrl - probably BagiBagi');
         return parseBagiBagi(data);
     }
     
