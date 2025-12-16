@@ -172,7 +172,8 @@ const adminLimiter = rateLimit({
 function generateDonationId(donation) {
     const timestamp = Date.now();
     const random = crypto.randomBytes(8).toString('hex');
-    const name = (donation.donor_name || 'anon').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const donorName = getDonorName(donation);
+    const name = donorName.toLowerCase().replace(/[^a-z0-9]/g, '');
     const amount = donation.amount || 0;
     const platform = donation.platform || 'unknown';
     return `${platform}_${name}_${amount}_${timestamp}_${random}`;
@@ -208,7 +209,7 @@ function markAsProcessed(userKey, donation) {
     
     processedList.push({
         platform: donation.platform,
-        donorName: getDonorName(donation), // ✅ Universal field
+        donorName: getDonorName(donation),
         amount: donation.amount,
         timestamp: Date.now()
     });
@@ -263,40 +264,47 @@ function sanitizeAmount(amount) {
     return isNaN(num) || num < 0 ? 0 : Math.min(num, 1000000000);
 }
 
+// ✅ FIXED: Parsing BagiBagi dengan logika yang benar
 function parseBagiBagi(data) {
     console.log('📦 Parsing BagiBagi data:', JSON.stringify(data, null, 2));
     
-    // ✅ Ambil userName dari BagiBagi
+    // ✅ Ambil userName dari data
     let userName = data.userName || 'Anonymous';
     
     // ✅ Jika isAnonymous = true, paksa jadi "Anonymous"
-    if (data.isAnonymous === true) {
+    // Ini sesuai dokumentasi: "jika value nya true maka orang tersebut melakukan donasi tanpa login ke akun"
+    const isAnonymous = data.isAnonymous === true;
+    if (isAnonymous) {
         userName = 'Anonymous';
-        console.log('🔒 Anonymous donation detected');
+        console.log('🔒 Anonymous donation (no login) - forcing name to Anonymous');
     }
     
-    console.log('🔍 Final userName:', userName);
+    console.log('✅ Final BagiBagi userName:', userName);
     
     return {
         platform: 'bagibagi',
-        userName: sanitizeString(userName), // ✅ Tetap pakai userName
+        donor_name: sanitizeString(userName), // ✅ FIXED: Gunakan donor_name sebagai field universal
         amount: sanitizeAmount(data.amount),
         message: sanitizeString(data.message || '', 500),
         isVerified: data.isVerified === true,
-        isAnonymous: data.isAnonymous === true
+        isAnonymous: isAnonymous,
+        // Simpan userName original untuk referensi internal
+        _originalUserName: data.userName
     };
 }
 
+// ✅ FIXED: getDonorName() yang menangani semua platform dengan benar
 function getDonorName(donation) {
-    // BagiBagi uses userName
-    if (donation.platform === 'bagibagi') {
-        return donation.userName || 'Anonymous';
-    }
-    // Trakteer & Tako use supporter_name
+    // ✅ Semua platform sekarang menggunakan donor_name sebagai field universal
+    // BagiBagi sudah dikonversi ke donor_name di parseBagiBagi()
+    // Saweria, Sociabuzz sudah menggunakan donor_name
+    // Trakteer & Tako menggunakan supporter_name
+    
     if (donation.platform === 'trakteer' || donation.platform === 'tako') {
         return donation.supporter_name || 'Anonymous';
     }
-    // Saweria & Sociabuzz use donor_name
+    
+    // Untuk BagiBagi, Saweria, Sociabuzz
     return donation.donor_name || 'Anonymous';
 }
 
@@ -308,7 +316,7 @@ function parseSaweria(data) {
             data.donator_name || 
             data.donatur_name || 
             'Anonymous'
-        ), // ✅ HANYA donator/donatur_name!
+        ),
         amount: sanitizeAmount(data.amount_raw || data.amount),
         message: sanitizeString(data.message || data.donator_message || data.donatur_message || '', 500)
     };
@@ -327,7 +335,7 @@ function parseTrakteer(data) {
     console.log('☕ Parsing Trakteer data');
     return {
         platform: 'trakteer',
-        supporter_name: sanitizeString(data.supporter_name || 'Anonymous'), // ✅ HANYA supporter_name!
+        supporter_name: sanitizeString(data.supporter_name || 'Anonymous'),
         amount: sanitizeAmount(data.price || data.amount),
         message: sanitizeString(data.supporter_message || data.message || '', 500)
     };
@@ -343,12 +351,13 @@ function parseTako(data) {
     };
 }
 
-// ✅ CRITICAL FIX: Prioritas deteksi BagiBagi SEBELUM cek platform field
+// ✅ FIXED: Auto-detect dengan prioritas yang benar untuk BagiBagi
 function autoDetectPlatform(data) {
     console.log('========== AUTO DETECT PLATFORM ==========');
     console.log('Raw data:', JSON.stringify(data, null, 2));
     
     // ✅ PRIORITY 1: Deteksi BagiBagi dari field eksklusif SEBELUM cek apapun
+    // BagiBagi memiliki field unik: userName, isVerified, isAnonymous
     if (data.userName !== undefined || 
         data.isVerified !== undefined || 
         data.isAnonymous !== undefined) {
@@ -416,7 +425,6 @@ function autoDetectPlatform(data) {
     }
     
     // ⚠️ CRITICAL: JANGAN langsung assume Sociabuzz jika ada supporter + amount
-    // Harus pastikan BUKAN BagiBagi dulu
     if (data.supporter && data.amount && 
         data.userName === undefined && 
         data.isVerified === undefined && 
@@ -430,7 +438,7 @@ function autoDetectPlatform(data) {
         return parseTrakteer(data);
     }
     
-    // ⚠️ Generic fallback (hindari ini sebisa mungkin)
+    // ⚠️ Generic fallback
     if (data.name && data.amount) {
         console.log('⚠️ Generic detection - defaulting to SAWERIA');
         return parseSaweria(data);
@@ -465,7 +473,7 @@ app.post('/donation/:key/webhook',
             }
             
             console.log('🔄 Detected BagiBagi array format, extracting first item...');
-            webhookData = webhookData.data[0]; // Ambil donasi pertama dari array
+            webhookData = webhookData.data[0];
             console.log('Extracted data:', JSON.stringify(webhookData, null, 2));
         }
         
@@ -480,7 +488,7 @@ app.post('/donation/:key/webhook',
         }
         
         console.log(`✅ Parsed as ${donation.platform.toUpperCase()}:`, {
-            donor: donation.donor_name,
+            donor_name: donation.donor_name || donation.supporter_name,
             amount: donation.amount,
             isVerified: donation.isVerified,
             isAnonymous: donation.isAnonymous
@@ -836,40 +844,4 @@ setInterval(() => {
         }
     }
     
-    for (const [userKey, processedList] of store.processedIds.entries()) {
-        const filtered = processedList.filter(item => 
-            (now - item.timestamp) < DUPLICATE_WINDOW
-        );
-        
-        if (filtered.length === 0) {
-            store.processedIds.delete(userKey);
-        } else {
-            store.processedIds.set(userKey, filtered);
-        }
-    }
-    
-    if (Math.random() < 0.01) {
-        store.cleanupInactiveUsers();
-    }
-}, 10000);
-
-app.use((err, req, res, next) => {
-    console.error('❌ Server error:', err);
-    res.status(500).json({ 
-        error: 'INTERNAL_SERVER_ERROR',
-        message: 'An unexpected error occurred'
-    });
-});
-
-app.use((req, res) => {
-    res.status(404).json({ 
-        error: 'NOT_FOUND',
-        message: 'Endpoint not found'
-    });
-});
-
-app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📝 Webhook endpoint: /donation/:key/webhook`);
-    console.log(`🔍 Health check: /health`);
-});
+    for (const [userKey, processedList] of store.
