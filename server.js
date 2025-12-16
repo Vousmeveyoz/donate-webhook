@@ -4,6 +4,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const fs = require('fs').promises;
 const path = require('path');
+
 const app = express();
 const PORT = process.env.PORT || 8080;
 
@@ -172,7 +173,7 @@ const adminLimiter = rateLimit({
 function generateDonationId(donation) {
     const timestamp = Date.now();
     const random = crypto.randomBytes(8).toString('hex');
-    const name = (donation.donor_name || 'anon').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const name = (getDonorName(donation) || 'anon').toLowerCase().replace(/[^a-z0-9]/g, '');
     const amount = donation.amount || 0;
     const platform = donation.platform || 'unknown';
     return `${platform}_${name}_${amount}_${timestamp}_${random}`;
@@ -208,7 +209,7 @@ function markAsProcessed(userKey, donation) {
     
     processedList.push({
         platform: donation.platform,
-        donorName: getDonorName(donation), // ✅ Universal field
+        donorName: getDonorName(donation),
         amount: donation.amount,
         timestamp: Date.now()
     });
@@ -264,22 +265,15 @@ function sanitizeAmount(amount) {
 }
 
 function parseBagiBagi(data) {
-    console.log('📦 Parsing BagiBagi data:', JSON.stringify(data, null, 2));
-    
-    // ✅ Ambil userName dari BagiBagi
     let userName = data.userName || 'Anonymous';
     
-    // ✅ Jika isAnonymous = true, paksa jadi "Anonymous"
-    if (data.isAnonymous === false) {
+    if (data.isAnonymous === true) {
         userName = 'Anonymous';
-        console.log('🔒 Anonymous donation detected');
     }
-    
-    console.log('🔍 Final userName:', userName);
     
     return {
         platform: 'bagibagi',
-        userName: sanitizeString(userName), // ✅ Tetap pakai userName
+        userName: sanitizeString(userName),
         amount: sanitizeAmount(data.amount),
         message: sanitizeString(data.message || '', 500),
         isVerified: data.isVerified === true,
@@ -287,28 +281,14 @@ function parseBagiBagi(data) {
     };
 }
 
-function getDonorName(donation) {
-    // BagiBagi uses userName
-    if (donation.platform === 'bagibagi') {
-        return donation.userName || 'Anonymous';
-    }
-    // Trakteer & Tako use supporter_name
-    if (donation.platform === 'trakteer' || donation.platform === 'tako') {
-        return donation.supporter_name || 'Anonymous';
-    }
-    // Saweria & Sociabuzz use donor_name
-    return donation.donor_name || 'Anonymous';
-}
-
 function parseSaweria(data) {
-    console.log('💰 Parsing Saweria data');
     return {
         platform: 'saweria',
         donor_name: sanitizeString(
             data.donator_name || 
             data.donatur_name || 
             'Anonymous'
-        ), // ✅ HANYA donator/donatur_name!
+        ),
         amount: sanitizeAmount(data.amount_raw || data.amount),
         message: sanitizeString(data.message || data.donator_message || data.donatur_message || '', 500)
     };
@@ -317,24 +297,27 @@ function parseSaweria(data) {
 function parseSociabuzz(data) {
     return {
         platform: 'sociabuzz',
-        donor_name: data.supporter || data.supporter_name || data.name || 'Anonymous',
-        amount: data.amount || data.amount_settled || data.amount_raw || 0,
-        message: data.message || data.supporter_message || ''
+        donor_name: sanitizeString(
+            data.supporter || 
+            data.supporter_name || 
+            data.name || 
+            'Anonymous'
+        ),
+        amount: sanitizeAmount(data.amount || data.amount_settled || data.amount_raw || 0),
+        message: sanitizeString(data.message || data.supporter_message || '', 500)
     };
 }
 
 function parseTrakteer(data) {
-    console.log('☕ Parsing Trakteer data');
     return {
         platform: 'trakteer',
-        supporter_name: sanitizeString(data.supporter_name || 'Anonymous'), // ✅ HANYA supporter_name!
+        supporter_name: sanitizeString(data.supporter_name || 'Anonymous'),
         amount: sanitizeAmount(data.price || data.amount),
         message: sanitizeString(data.supporter_message || data.message || '', 500)
     };
 }
 
 function parseTako(data) {
-    console.log('🐙 Parsing Tako data');
     return {
         platform: 'tako',
         supporter_name: sanitizeString(data.supporter_name || data.donator_name || 'Anonymous'),
@@ -343,120 +326,104 @@ function parseTako(data) {
     };
 }
 
-// ✅ CRITICAL FIX: Prioritas deteksi BagiBagi SEBELUM cek platform field
+function getDonorName(donation) {
+    if (donation.platform === 'bagibagi') {
+        return donation.userName || 'Anonymous';
+    }
+    if (donation.platform === 'trakteer' || donation.platform === 'tako') {
+        return donation.supporter_name || 'Anonymous';
+    }
+    return donation.donor_name || 'Anonymous';
+}
+
 function autoDetectPlatform(data) {
-    console.log('========== AUTO DETECT PLATFORM ==========');
-    console.log('Raw data:', JSON.stringify(data, null, 2));
-    
-    // ✅ PRIORITY 1: Deteksi BagiBagi dari field eksklusif SEBELUM cek apapun
     if (data.userName !== undefined || 
-        data.isVerified !== undefined || 
-        data.isAnonymous !== undefined) {
-        console.log('✅ BAGIBAGI detected from EXCLUSIVE fields (userName/isVerified/isAnonymous)');
+        (data.isVerified !== undefined && data.isAnonymous !== undefined)) {
         return parseBagiBagi(data);
     }
     
-    // ✅ PRIORITY 2: Deteksi BagiBagi dari platform field
-    const platformLower = (data.platform || '').toLowerCase();
-    if (platformLower === 'bagibagi' || platformLower.includes('bagi')) {
-        console.log('✅ BAGIBAGI detected from platform field');
-        return parseBagiBagi(data);
-    }
-    
-    // ✅ PRIORITY 3: Deteksi Saweria dari field spesifik
-    if (data.version && (data.donator_name || data.donatur_name)) {
-        console.log('✅ SAWERIA detected (version + donator_name)');
-        return parseSaweria(data);
-    }
-    if (data.donator_name || data.donatur_name) {
-        console.log('✅ SAWERIA detected (donator_name)');
+    if (data.donator_name !== undefined || data.donatur_name !== undefined) {
         return parseSaweria(data);
     }
     
-    // ✅ PRIORITY 4: Deteksi Sociabuzz dari field spesifik
-    if (data.supporter && (data.email_supporter || data.currency === 'IDR')) {
-        console.log('✅ SOCIABUZZ detected (supporter + email/currency)');
-        return parseSociabuzz(data);
-    }
-    if (data.content?.link?.includes('sociabuzz.com')) {
-        console.log('✅ SOCIABUZZ detected (content link)');
-        return parseSociabuzz(data);
+    if (data.supporter !== undefined && data.supporter_name === undefined) {
+        if (data.email_supporter || data.amount_settled || data.currency === 'IDR') {
+            return parseSociabuzz(data);
+        }
     }
     
-    // ✅ PRIORITY 5: Deteksi dari platform field (fallback)
-    if (platformLower === 'sociabuzz' || platformLower === 'buzz') {
-        console.log('✅ SOCIABUZZ detected from platform field');
-        return parseSociabuzz(data);
-    }
-    if (platformLower === 'saweria') {
-        console.log('✅ SAWERIA detected from platform field');
-        return parseSaweria(data);
-    }
-    if (platformLower === 'trakteer') {
-        console.log('✅ TRAKTEER detected from platform field');
+    if (data.supporter_name !== undefined && data.price !== undefined) {
         return parseTrakteer(data);
     }
-    if (platformLower === 'tako') {
-        console.log('✅ TAKO detected from platform field');
+    
+    if (data.supporter_name !== undefined && data.amount_raw !== undefined) {
         return parseTako(data);
     }
     
-    // ✅ PRIORITY 6: Deteksi dari URL
-    if (data.url) {
-        if (data.url.includes('sociabuzz')) return parseSociabuzz(data);
-        if (data.url.includes('trakteer')) return parseTrakteer(data);
-        if (data.url.includes('saweria')) return parseSaweria(data);
-        if (data.url.includes('bagibagi')) return parseBagiBagi(data);
+    const platformLower = (data.platform || '').toLowerCase();
+    
+    if (platformLower === 'bagibagi' || platformLower.includes('bagi')) {
+        return parseBagiBagi(data);
     }
     
-    // ✅ PRIORITY 7: Deteksi dari kombinasi field (last resort)
-    if (data.supporter_name && data.price) {
-        console.log('✅ TRAKTEER detected (supporter_name + price)');
-        return parseTrakteer(data);
-    }
-    
-    // ⚠️ CRITICAL: JANGAN langsung assume Sociabuzz jika ada supporter + amount
-    // Harus pastikan BUKAN BagiBagi dulu
-    if (data.supporter && data.amount && 
-        data.userName === undefined && 
-        data.isVerified === undefined && 
-        data.isAnonymous === undefined) {
-        console.log('✅ SOCIABUZZ detected (supporter + amount, confirmed NOT BagiBagi)');
-        return parseSociabuzz(data);
-    }
-    
-    if (data.supporter_name) {
-        console.log('✅ TRAKTEER detected (supporter_name)');
-        return parseTrakteer(data);
-    }
-    
-    // ⚠️ Generic fallback (hindari ini sebisa mungkin)
-    if (data.name && data.amount) {
-        console.log('⚠️ Generic detection - defaulting to SAWERIA');
+    if (platformLower === 'saweria') {
         return parseSaweria(data);
     }
     
-    console.log('❌ No platform detected');
+    if (platformLower === 'sociabuzz' || platformLower === 'buzz') {
+        return parseSociabuzz(data);
+    }
+    
+    if (platformLower === 'trakteer') {
+        return parseTrakteer(data);
+    }
+    
+    if (platformLower === 'tako') {
+        return parseTako(data);
+    }
+    
+    if (data.url) {
+        if (data.url.includes('bagibagi')) return parseBagiBagi(data);
+        if (data.url.includes('saweria')) return parseSaweria(data);
+        if (data.url.includes('sociabuzz')) return parseSociabuzz(data);
+        if (data.url.includes('trakteer')) return parseTrakteer(data);
+    }
+    
+    if (data.content?.link) {
+        if (data.content.link.includes('sociabuzz')) {
+            return parseSociabuzz(data);
+        }
+    }
+    
+    if (data.supporter_name !== undefined) {
+        return parseTrakteer(data);
+    }
+    
+    if (data.supporter !== undefined && data.amount) {
+        return parseSociabuzz(data);
+    }
+    
+    if (data.version && data.amount) {
+        return parseSaweria(data);
+    }
+    
+    if ((data.name || data.donatur) && data.amount) {
+        return parseSaweria(data);
+    }
+    
     return null;
 }
 
-// ✅ WEBHOOK HANDLER dengan support BagiBagi array format
 app.post('/donation/:key/webhook', 
     validateUserKey,
     (req, res) => {
         const userKey = req.params.key;
         const config = req.userConfig;
         
-        console.log(`\n📥 Webhook received for user: ${userKey}`);
-        console.log('Raw body:', JSON.stringify(req.body, null, 2));
-        
         let webhookData = req.body;
         
-        // ✅ HANDLE BAGIBAGI ARRAY FORMAT
-        // BagiBagi mengirim: { data: [...], success: true, message: "Success" }
         if (webhookData.data && Array.isArray(webhookData.data)) {
             if (webhookData.data.length === 0) {
-                console.log('⚠️ BagiBagi array is empty, no donation data');
                 return res.status(200).json({ 
                     success: true, 
                     message: 'Empty data array',
@@ -464,30 +431,19 @@ app.post('/donation/:key/webhook',
                 });
             }
             
-            console.log('🔄 Detected BagiBagi array format, extracting first item...');
-            webhookData = webhookData.data[0]; // Ambil donasi pertama dari array
-            console.log('Extracted data:', JSON.stringify(webhookData, null, 2));
+            webhookData = webhookData.data[0];
         }
         
         const donation = autoDetectPlatform(webhookData);
         
         if (!donation) {
-            console.log('❌ Failed to parse donation data');
             return res.status(400).json({ 
                 error: 'INVALID_DONATION_DATA',
                 message: 'Could not parse donation data'
             });
         }
         
-        console.log(`✅ Parsed as ${donation.platform.toUpperCase()}:`, {
-            donor: donation.donor_name,
-            amount: donation.amount,
-            isVerified: donation.isVerified,
-            isAnonymous: donation.isAnonymous
-        });
-        
         if (!donation.amount || donation.amount <= 0) {
-            console.log('❌ Invalid amount');
             return res.status(400).json({ 
                 error: 'INVALID_AMOUNT',
                 message: 'Amount must be greater than 0'
@@ -495,7 +451,6 @@ app.post('/donation/:key/webhook',
         }
         
         if (isDuplicate(userKey, donation)) {
-            console.log('⚠️ Duplicate donation ignored');
             return res.status(200).json({ 
                 success: true, 
                 message: 'Duplicate ignored',
@@ -509,14 +464,12 @@ app.post('/donation/:key/webhook',
             const result = addToQueue(userKey, donation, config.maxQueueSize);
             
             if (!result.success) {
-                console.log('❌ Queue is full');
                 return res.status(429).json({ 
                     error: 'QUEUE_FULL',
                     message: 'Donation queue is full'
                 });
             }
             
-            console.log(`📋 Added to queue (position: ${result.queueSize})`);
             markAsProcessed(userKey, donation);
             return res.status(200).json({ 
                 success: true, 
@@ -529,7 +482,6 @@ app.post('/donation/:key/webhook',
         store.timestamps.set(userKey, Date.now());
         markAsProcessed(userKey, donation);
         
-        console.log('✅ Donation stored successfully');
         res.status(200).json({ success: true, queued: false });
     }
 );
@@ -854,7 +806,7 @@ setInterval(() => {
 }, 10000);
 
 app.use((err, req, res, next) => {
-    console.error('❌ Server error:', err);
+    console.error('Server error:', err);
     res.status(500).json({ 
         error: 'INTERNAL_SERVER_ERROR',
         message: 'An unexpected error occurred'
@@ -869,7 +821,7 @@ app.use((req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📝 Webhook endpoint: /donation/:key/webhook`);
-    console.log(`🔍 Health check: /health`);
+    console.log(`Server running on port ${PORT}`);
+    console.log(`Webhook endpoint: /donation/:key/webhook`);
+    console.log(`Health check: /health`);
 });
