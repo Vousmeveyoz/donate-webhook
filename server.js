@@ -365,14 +365,13 @@ function parseTako(data) {
     };
 }
 
-// ✅ CRITICAL FIX: Prioritas deteksi BagiBagi SEBELUM cek platform field
 function autoDetectPlatform(data) {
     console.log('========== AUTO DETECT PLATFORM ==========');
     console.log('Raw data:', JSON.stringify(data, null, 2));
     
     // ✅ PRIORITY 1: Deteksi BagiBagi dari transaction_id
     // BagiBagi transaction_id format: "bagibagi-uuid"
-    if (data.transaction_id && data.transaction_id.startsWith('bagibagi-')) {
+    if (data.transaction_id && typeof data.transaction_id === 'string' && data.transaction_id.startsWith('bagibagi-')) {
         console.log('✅ BAGIBAGI detected from transaction_id prefix');
         const result = parseBagiBagi(data);
         console.log('✅ BagiBagi result:', JSON.stringify(result, null, 2));
@@ -448,7 +447,6 @@ function autoDetectPlatform(data) {
     }
     
     // ✅ PRIORITY 8: Deteksi dari kombinasi field sebagai FALLBACK
-    // Hati-hati: supporter_name bisa jadi Trakteer atau Tako
     if (data.supporter_name && data.price) {
         console.log('✅ TRAKTEER detected (supporter_name + price)');
         return parseTrakteer(data);
@@ -457,13 +455,13 @@ function autoDetectPlatform(data) {
     // ⚠️ Fallback detection dengan prioritas field
     console.log('⚠️ No specific platform detected, using field-based fallback');
     
-    // Cek field BagiBagi dulu (userName atau name dengan mediaShareUrl)
+    // Cek field BagiBagi dulu
     if (data.userName !== undefined) {
         console.log('⚠️ Found userName - probably BagiBagi');
         return parseBagiBagi(data);
     }
     
-    // BagiBagi sering punya mediaShareUrl
+    // BagiBagi sering punya mediaShareUrl dengan field name
     if (data.name !== undefined && data.mediaShareUrl !== undefined) {
         console.log('⚠️ Found name + mediaShareUrl - probably BagiBagi');
         return parseBagiBagi(data);
