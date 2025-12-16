@@ -270,7 +270,7 @@ function parseBagiBagi(data) {
     let userName = data.userName || 'Anonymous';
     
     // ✅ Jika isAnonymous = true, paksa jadi "Anonymous"
-    if (data.isAnonymous === true) {
+    if (data.isAnonymous === false) {
         userName = 'Anonymous';
         console.log('🔒 Anonymous donation detected');
     }
